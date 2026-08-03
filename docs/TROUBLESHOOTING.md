@@ -1,0 +1,393 @@
+# Troubleshooting
+
+The commands below assume the Docker deployment unless stated otherwise. Never
+paste Stellar secret keys, encryption keys, API keys, signed authorization
+entries, or database passwords into issues or shared logs.
+
+## First checks
+
+From the repository root (`openx402/`):
+
+```bash
+docker compose ps
+docker compose logs --tail=200 postgres facilitator mcp
+curl -i http://localhost:4022/health/ready
+curl -i http://localhost:4022/supported
+curl -i http://localhost:4522/healthz
+curl -i http://localhost:4522/readyz
+```
+
+`/health/ready` returns 503 only when the facilitator cannot execute `SELECT 1`
+against PostgreSQL. Its `search` object reports search degradation but does not
+gate readiness. Stellar RPC, Horizon, and account balances are checked during
+startup, not continuously by this endpoint.
+
+## Facilitator is not ready
+
+**Symptom:** `/health/ready` returns HTTP 503 and `status: "not_ready"`.
+
+**Likely cause:** PostgreSQL is unavailable, credentials are wrong, migrations
+did not complete, or the connection pool cannot connect.
+
+From the repository root (`openx402/`):
+
+```bash
+docker compose ps postgres facilitator
+docker compose logs --tail=200 postgres facilitator
+docker compose exec postgres pg_isready -U openx402 -d openx402
+```
+
+Check `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and the facilitator's
+`DATABASE_URL`. The Compose database is intentionally not exposed on the host.
+The facilitator runs forward-only migrations before opening its HTTP listener.
+
+## PostgreSQL connection failure
+
+**Symptom:** the facilitator container restarts before listening, or logs a
+connection timeout/authentication error.
+
+**Check:** `database_url_env` in the selected facilitator YAML names the
+environment variable that must contain the URL. The checked-in profiles use
+`DATABASE_URL`. Compose constructs it from the Postgres variables.
+
+From the repository root (`openx402/`):
+
+```bash
+docker compose config
+docker compose logs --tail=200 postgres
+docker compose logs --tail=200 facilitator
+```
+
+Do not publish `docker compose config` output because it may contain resolved
+secrets.
+
+## pgvector is unavailable
+
+**Symptom:** search works lexically, but `/health/ready` shows
+`search.vectorSupport: false` and semantic search is degraded.
+
+**Expected detail:** `pgvector is not installed on this PostgreSQL server;
+running lexical-only`.
+
+From the repository root (`openx402/`):
+
+```bash
+docker compose exec postgres psql -U openx402 -d openx402 \
+  -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
+```
+
+The checked-in Compose image includes pgvector. On another PostgreSQL service,
+install/enable the extension with sufficient database privileges, or accept the
+supported lexical-only mode. Payment endpoints are unaffected.
+
+## Semantic search is degraded
+
+**Symptom:** `/health/ready` is 200, but `search.semantic` is `degraded` or
+`disabled`; search responses may report partial results.
+
+From the repository root (`openx402/`):
+
+```bash
+curl -fsS http://localhost:4022/health/ready | jq '.search'
+docker compose logs --no-log-prefix facilitator \
+  | jq -R 'fromjson? | select(.event == "search_ready")'
+```
+
+Check these exact keys:
+
+- `search.semantic.enabled`
+- `search.semantic.provider`
+- `search.semantic.remote_url_env`
+- `search.semantic.remote_api_key_env`
+- `search.semantic.timeout_ms`
+- `search.semantic.dimension`
+- `search.models.offline`
+- `search.models.require_pinned_revision`
+
+The stock Docker image does not include `@huggingface/transformers`; the local
+BGE-M3 profile therefore degrades to lexical unless you build a custom image.
+
+## OpenRouter returns 401 or times out
+
+**Symptom:** worker status/detail or `lastError` says `remote provider returned
+401 Unauthorized`, or embedding jobs time out and retry.
+
+For the Railway profile, check both:
+
+```text
+FACILITATOR_EMBEDDING_URL=https://openrouter.ai/api/v1/embeddings
+OPENROUTER_API_KEY=<sealed key>
+```
+
+The profile's exact config keys are
+`search.semantic.remote_url_env: FACILITATOR_EMBEDDING_URL` and
+`search.semantic.remote_api_key_env: OPENROUTER_API_KEY`. The provider's
+startup health check validates only that a URL exists; credential failure
+appears after an embedding job runs. Calls are bounded by
+`search.semantic.timeout_ms`, currently 5000 ms in the Railway profile.
+
+Search falls back to lexical retrieval. Fix the key/endpoint, then allow queued
+jobs to retry. `/health/ready` continues to expose current provider status and
+detail.
+
+## No catalog results
+
+**Symptom:** discovery endpoints return empty arrays after a seller emitted a
+402 challenge.
+
+A 402 challenge alone does not unconditionally activate a listing. Check:
+
+- `indexing.auto_catalog: true`;
+- `indexing.index_on` (`verified` in hosted/self-hosted profiles);
+- that a valid `/verify` actually succeeded;
+- that the paid payload carried a valid `extensions.bazaar` declaration;
+- that the searched filters match the cataloged network/scheme/asset;
+- `discovery.include_stale` and `discovery.include_unverified`;
+- whether `stale_after_hours` demoted the resource.
+
+From any directory:
+
+```bash
+curl -fsS 'http://localhost:4022/discovery/resources?limit=50' | jq
+curl -fsS 'http://localhost:4022/discovery/search?query=weather&limit=50' | jq
+```
+
+The `asset` filter is implementation-specific. There is no price filter.
+
+## Bazaar metadata was rejected
+
+**Symptom:** payment succeeds, but the `EXTENSION-RESPONSES` header contains
+`bazaar.status: "rejected"`.
+
+This is expected soft-failure behavior: bad catalog data cannot invalidate a
+payment. Decode the base64 JSON header and inspect `rejectedReason`. Common
+public reasons include schema failure, oversized metadata, missing URL,
+insecure/local origin, missing MCP tool name, `payTo` ownership conflict, and
+catalog write failure.
+
+Check these exact policy keys:
+
+- `indexing.require_valid_schema`
+- `indexing.max_metadata_bytes`
+- `indexing.max_schema_bytes`
+- `indexing.max_example_bytes`
+- `catalog_security.require_https_origins`
+- `catalog_security.allow_local_origins`
+
+Operator-only internal rejection details are in catalog observations/analytics,
+not in public Bazaar discovery responses.
+
+## Seller URL is rejected
+
+**Symptom:** `rejectedReason` says the resource must use HTTPS or is not publicly
+routable.
+
+The hosted Railway profile requires HTTPS and rejects loopback, private, and
+link-local addresses. Use an HTTPS tunnel and make `resource.url` the exact
+public URL buyers call.
+
+The self-hosted local profile permits local origins for testnet development.
+Pubnet startup forbids `catalog_security.allow_local_origins: true` and requires
+`require_https_origins: true`.
+
+`mcp://` is a logical MCP identity, not a directly connectable endpoint. A paid
+private MCP rejects it unless `network_security.resolved_mcp_endpoints` maps it
+to an operator-verified HTTPS endpoint.
+
+## Buyer receives HTTP 402 repeatedly
+
+**Symptom:** the paid retry receives another PaymentRequired response.
+
+Check, without logging the signed payload:
+
+- the second request repeats the same seller method, URL, query, and body;
+- payment headers were encoded from the selected PaymentRequired;
+- network, asset, atomic amount, `payTo`, and timeout equal accepted terms;
+- the payer signed the correct auth entry before expiry;
+- seller and buyer use the same facilitator/network;
+- the seller middleware can reach `/verify` and `/settle`;
+- the buyer reused one payment identifier for the logical request.
+
+Inspect the seller's safe error output and facilitator `invalidReason` or
+`errorReason`. Do not print `BUYER_SECRET_KEY` or authorization XDR.
+
+## Wrong Stellar network
+
+**Symptom:** `unsupported_network`, `network_mismatch`, or a signature that
+fails despite apparently correct terms.
+
+Check all copies use exactly `stellar:testnet` or `stellar:pubnet`. A Soroban
+signature is bound to the network passphrase; a testnet authorization cannot be
+replayed on pubnet. The checked-in profiles enable only `stellar:testnet`.
+
+From any directory:
+
+```bash
+curl -fsS http://localhost:4022/supported | jq '.kinds'
+```
+
+## Buyer lacks the payment asset
+
+**Symptom:** record/enforcing simulation rejects the transfer or settlement,
+often as `invalid_stellar_*_simulation_failed`.
+
+Check the buyer's balance for the exact SEP-41 contract in
+`paymentRequirements.asset`. Atomic units are integer strings; do not assume all
+assets have seven decimals. Fee sponsorship supplies XLM transaction fees, not
+the payment asset.
+
+## Seller trustline is missing
+
+**Symptom:** an issued asset transfer fails during simulation or settlement.
+
+For classic issued assets represented by a Stellar Asset Contract, confirm the
+seller account can hold the underlying asset and has any required trustline.
+Native XLM does not require a trustline. Also check authorization-required,
+paused, or clawback asset state. These token failures can surface as enforcing
+simulation failure; the facilitator does not create seller trustlines.
+
+## No channel account is available
+
+**Symptom:** `/settle` returns HTTP 503, `Retry-After: 1`, and
+`errorReason: "settle_stellar_temporarily_unavailable"`.
+
+The public response intentionally combines busy causes. Possible causes include
+all channels leased/quarantined, an identical settlement already owned by
+another replica, or the unresolved-settlement limit.
+
+From the repository root (`openx402/`):
+
+```bash
+docker compose logs --tail=200 facilitator
+```
+
+Do not restart merely to clear an unknown transaction. Channel/settlement state
+is durable and recovery resumes polling. Check
+`limits.channel_lease_ms`, `limits.max_pending_settlements`, channel balances,
+and unresolved records through operator analytics/database access.
+
+## Sponsor budget exceeded
+
+**Symptom:** settlement returns
+`settle_stellar_sponsor_budget_exceeded`.
+
+Check:
+
+- `limits.max_sponsored_stroops_per_key_per_day`
+- `limits.max_global_sponsored_stroops_per_day`
+- caller identity (`FACILITATOR_API_KEYS`, or anonymous source IP)
+- enforcing-simulation estimated fee.
+
+Do not raise ceilings blindly. Measure legitimate enforcing costs for each
+scheme, supported smart-account class, and allowed hook. Failed submitted
+transactions still consume fee budget.
+
+## Transaction status is unknown
+
+**Symptom:** response contains
+`settle_stellar_transaction_status_unknown` and a non-empty transaction hash,
+or MCP returns `SETTLEMENT_UNKNOWN`.
+
+The exact envelope and hash were persisted before submission. Record the known
+hash and payment identifier, then poll/resolve that settlement. Do not create a
+new payment authorization. The facilitator recovery loop polls unresolved
+records every 15 seconds and identical identifier retries resume the same
+record.
+
+Check `limits.settle_poll_ms`, `limits.settle_timeout_ms`, RPC availability, and
+the returned transaction hash. `UNKNOWN` is not proof of failure.
+
+## MCP exposes only two tools
+
+**Symptom:** `tools/list` returns `x402_search_resources` and
+`x402_get_resource`, but no paid tool.
+
+This is the intended hosted/default state. `signer.mode: none` means discovery
+only. `GET /healthz` reports `payments: "disabled"`.
+
+Use a real MCP client because Streamable HTTP requires initialization and a
+session. From `openx402/mcp-server/`, after `npm ci`:
+
+```bash
+node --input-type=module -e '
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+const client = new Client({ name: "tool-check", version: "0.1.0" }, { capabilities: {} });
+await client.connect(new StreamableHTTPClientTransport(new URL("http://localhost:4522/mcp")));
+console.log((await client.listTools()).tools.map(tool => tool.name));
+await client.close();'
+```
+
+## `x402_call_resource` is absent
+
+**Cause:** no signer provider is configured. The tool is registered only when
+`signer.mode` is `env-secret`, `external`, or `encrypted-key`.
+
+`env-secret` is stdio-only. A non-stdio signer deployment also requires bearer
+keys through `http.api_keys_env`. Pubnet remote execution additionally requires
+explicit pubnet enablement and `budget.store: postgres`.
+
+The current paid implementation supports the stock Stellar exact client only.
+The interface accepts `upto`, but no reusable upstream Stellar `upto` client
+exists; it fails closed instead of downgrading to exact.
+
+## MCP `mcp.json` is missing `mcpServers`
+
+**Symptom:** the agent rejects an MCP configuration containing only a URL.
+
+Use the required top-level object:
+
+```json
+{
+  "mcpServers": {
+    "openx402": {
+      "url": "https://mcp-production-e242.up.railway.app/mcp"
+    }
+  }
+}
+```
+
+Clients requiring an explicit transport should select Streamable HTTP.
+
+## `mcp://` URL is not connectable
+
+**Symptom:** paid MCP execution rejects a cataloged logical `mcp://` resource.
+
+`mcp://` names a tool inside an established MCP session; it does not identify a
+network endpoint. Use a seller declaration whose `resource.url` is the actual
+reachable HTTPS MCP endpoint. If a logical identifier is unavoidable, the
+private MCP operator must map it to a reviewed HTTPS endpoint in
+`network_security.resolved_mcp_endpoints`. The hosted discovery MCP does not
+connect to or pay that resource.
+
+## Pubnet refuses startup
+
+**Symptom:** facilitator or paid MCP exits before listening.
+
+This is fail-closed behavior. Facilitator pubnet requires:
+
+- `development_auto_fund: false`;
+- `fee_ceilings_calibrated: true` with actually measured values;
+- at least one `FACILITATOR_API_KEYS` value;
+- valid sponsor and configured channel secrets;
+- the configured minimum balance for sponsor and every channel;
+- an explicitly configured `upto` contract;
+- `catalog_security.require_https_origins: true`;
+- `catalog_security.allow_local_origins: false`;
+- `discovery.include_unverified: false`.
+
+The current implementation requires an `upto` contract even if the intended
+use is exact-only. Configuration cannot prove that contract is audited.
+
+Paid remote MCP pubnet additionally requires a signer, authenticated transport,
+and PostgreSQL budget store. Do not bypass these checks. Pubnet still requires
+SDF/x402 decisions, ABI freeze, audit, calibrated fees, TTL operations, and
+published conformance evidence.
+
+## Related documents
+
+- [Self-hosting](SELF_HOSTING.md)
+- [Architecture](ARCHITECTURE.md)
+- [Security](SECURITY.md)
+- [Facilitator configuration](../facilitator/docs/CONFIGURATION.md)
+- [MCP server guide](../mcp-server/README.md)

@@ -1,0 +1,244 @@
+# Security
+
+openx402 is a testnet preview. Exact is implemented and live on testnet.
+Stellar `upto` remains proposed pending SDF review, x402 TSC acceptance, ABI
+freeze, and external audit. Pubnet is disabled in checked-in profiles and the
+project does not claim production readiness.
+
+Component-specific analysis:
+
+- [Bazaar catalog trust boundary](../facilitator/docs/CATALOG-TRUST.md)
+- [Stellar `upto` threat model](../x402-stellar-upto/docs/THREAT_MODEL.md)
+- [Stellar `upto` security policy](../x402-stellar-upto/SECURITY.md)
+- [MCP smart-account model](../mcp-server/docs/SMART-ACCOUNTS.md)
+
+## Non-custodial fee sponsorship
+
+The buyer signs the token authorization. The seller address in `payTo` receives
+the payment asset. A facilitator channel signs the rebuilt inner transaction,
+and the sponsor signs an outer fee-bump envelope and pays Stellar network fees.
+
+The facilitator must never be payer or recipient. It does not hold buyer funds,
+route seller proceeds through an operator account, or gain authority to change
+recipient, asset, or signed amount. Fee sponsorship is not payment sponsorship:
+the buyer still supplies the payment asset.
+
+## Sponsor abuse and expensive accounts
+
+Custom Stellar accounts execute `__check_auth`. A payer can intentionally use
+an expensive account to consume facilitator simulation resources. An `upto`
+hook can create the same risk and can also fail intentionally.
+
+The facilitator mitigates this with:
+
+- record simulation followed by enforcing simulation;
+- separate exact and `upto` resource-fee ceilings;
+- inclusion-fee and total-fee ceilings;
+- per-principal and global daily sponsored-fee budgets in PostgreSQL;
+- per-principal simulation rate limits and a process concurrency semaphore;
+- a maximum unresolved-settlement count;
+- an operator maximum for seller-selected `maxTimeoutSeconds`;
+- an allowlist for settlement hooks.
+
+Only enforcing simulation enters the fee gate because it executes the signed
+custom-account and hook paths. A failed submitted Stellar transaction still
+uses network fees and therefore keeps its sponsor-budget reservation.
+
+An `upto` hook is payer-selected availability risk. The facilitator rejects a
+hook outside the allowlist and rejects the token or settlement contract as the
+hook. A hook failure reverts settlement atomically; it does not authorize a
+fallback payment.
+
+## Security invariants operators cannot disable
+
+| Invariant | Enforcement |
+| --- | --- |
+| x402 v2 envelope and non-null rejection reason | Fixed parser and response paths. |
+| Network, scheme, asset, recipient, timeout, and fee-sponsorship binding | Compared between payload, requirements, and enabled runtime. |
+| Facilitator cannot be payer | Sponsor/channel addresses are rejected as payer. |
+| Client source and fee cannot control settlement | Unsafe sources and fee bumps are rejected; facilitator rebuilds the transaction. |
+| Exact auth tree and transfer | One signed transfer root, no children, exact transfer events. |
+| `upto` payer-bound fields | Maximum, recipient, token, window, facilitator, settlement ID, hook, contract, and network are bound. |
+| `upto` amount range | `maximum > 0` and `0 <= actual <= maximum`. |
+| Record then enforcing simulation | Every accepted path executes enforcing simulation before settlement. |
+| Enforcing fee gates | Resource, inclusion, and total ceilings are always checked. |
+| Channel fencing | PostgreSQL fencing rejects a stale lease owner. |
+| Hash before submission | Signed envelope and hash are durable before RPC submission. |
+| Known-hash recovery | Unknown settlement is polled; it is never rebuilt blindly. |
+| Real zero settlement | Successful zero `upto` submits on-chain and returns a hash. |
+| Hook boundary | Allowlist plus settlement-contract/token self-hook rejection. |
+| Bazaar soft failure | Catalog rejection cannot change a valid payment result. |
+| No icon fetching | Seller icon URLs are stored only. |
+| Append-only catalog history | Versions/payment options are appended; payTo conflict is quarantined. |
+| Pubnet development funding prohibition | Pubnet rejects `development_auto_fund`. |
+
+Operators choose numerical ceilings and allowlists, but cannot bypass the checks
+themselves. Setting `fee_ceilings_calibrated: true` is an operator assertion;
+the program cannot prove the values came from measured p99 production costs.
+
+## Zero settlement and replay
+
+A successful zero `upto` settlement is not an off-chain shortcut. The contract
+approves, pulls, fully refunds, emits the settlement event, consumes the auth
+nonce, and produces a real hash. This makes zero terminal like every other
+successful amount.
+
+A Stellar transaction that reaches `FAILED` rolls back contract and token state
+and does not consume the authorization nonce. The identical authorization may
+be retried after a definitive failure while still valid. A missing or ambiguous
+RPC response is different: do not retry until the persisted hash resolves.
+
+## Lost RPC responses and idempotency
+
+Before submission, openx402 commits the exact signed envelope, transaction
+hash, payment identifier/fingerprint, channel lease, and budget reservation.
+If the RPC response is lost, the settlement becomes unknown and recovery polls
+that hash. The channel remains quarantined from unrelated settlements.
+
+Clients must preserve one payment identifier across retries. Identical retries
+resume or return the cached result; conflicting reuse returns HTTP 409. After
+`SETTLEMENT_UNKNOWN`, poll or resolve the known settlement. Never create a new
+authorization blindly.
+
+## Channel sequence safety
+
+Classic Stellar source accounts serialize transactions by sequence number.
+openx402 uses a pool of funded channel accounts and leases them with PostgreSQL
+row locks and fencing tokens. Only the lease owner may commit the prepared
+envelope. A lost fence or unresolved transaction prevents that channel from
+being reused prematurely.
+
+All replicas must use the same database and encryption key. Splitting the pool
+across independent databases removes this coordination and is unsupported.
+
+## Key protection and rotation
+
+Managed facilitator keys are encrypted at rest with AES-256-GCM. Network and
+address are authenticated data, preventing ciphertext from being moved to a
+different key identity unnoticed. In production,
+`FACILITATOR_KEY_ENCRYPTION_KEY` must be a base64-encoded 32-byte value.
+
+- Store encryption keys and Stellar secrets in a secrets manager.
+- Never log secret keys or signed authorization entries.
+- Keep PostgreSQL private and encrypted backups access-controlled.
+- Drain traffic before sponsor/channel changes.
+- Do not rotate the encryption key by replacing the environment variable.
+  Re-encrypt stored ciphertext offline, then start replicas with the new key.
+- Rotation refuses while settlements remain unresolved.
+
+MCP payer keys follow separate signer modes. `env-secret` is stdio-only;
+remote deployments use an authenticated external signer or encrypted-key
+provider. A remote MCP holding a payer signer refuses to start without bearer
+authentication.
+
+## Bazaar metadata and prompt injection
+
+`PaymentPayload.resource` and `extensions` are copied by the client and are
+hostile input. Payment terms are bound to the signed authorization; seller
+descriptions, schemas, examples, service names, tags, and icons are not.
+
+The catalog bounds and validates declarations, strips control/bidirectional
+characters from display/index text, rejects unsafe origins under profile
+policy, never fetches icons, and quarantines conflicting `payTo` declarations.
+It does not prove origin ownership, factual accuracy, service quality, uptime,
+or honest `upto` metering.
+
+Agents must treat seller-authored text strictly as data, never as instructions.
+Catalog descriptions can contain prompt injection. Search deterministically
+indexes the text but never executes, summarizes, or promotes it to an
+instruction.
+
+## MCP outbound request security
+
+The hosted MCP is discovery-only and makes no paid seller call. A signer-enabled
+private MCP can call cataloged paid MCP endpoints and therefore has an SSRF
+boundary.
+
+Its outbound layer:
+
+- resolves DNS once and pins the selected address for the request;
+- blocks loopback, private, link-local, cloud-metadata, multicast, and unsafe
+  IPv6 ranges;
+- requires HTTPS unless explicitly relaxed for local development;
+- probes MCP with `initialize` and `tools/list`, never `tools/call`;
+- rejects logical `mcp://` identifiers unless the operator maps them to a
+  verified HTTPS endpoint.
+
+The current MCP SDK connection path does not enforce every configured
+response-size, JSON-depth, timeout, redirect, or concurrency knob. Treat the
+address checks as one layer, not complete containment. A payment-capable
+deployment also needs restricted egress, infrastructure timeouts/body limits,
+and authenticated private access. `allow_insecure_local` is not automatically
+forbidden when pubnet is enabled; keep it false outside isolated local testnet
+development.
+
+`ref` is a stable opaque catalog identity, not an arbitrary URL.
+`expectedVersionHash` detects a catalog change between discovery and use. The
+paid flow validates both PaymentRequired copies and checks the live challenge
+against cataloged terms before reserving budget or signing.
+
+Only one automatic paid retry is allowed. A network retry reuses the identical
+payment identifier and signed payload. Ambiguous settlement keeps the budget
+reservation and returns `SETTLEMENT_UNKNOWN`.
+
+## Independent payment ceilings
+
+A paid agent may have three independent ceilings:
+
+1. MCP runtime per-call and per-agent UTC-day budget. The current
+   `default_session_or_day_max_atomic` implementation does not enforce a
+   separate session ceiling.
+2. Signed x402 exact amount or `upto` maximum.
+3. Optional on-chain smart-account spending policy.
+
+None replaces another. Runtime checks fail cheaply before signing; the signed
+maximum limits that authorization; Soroban enforcing simulation applies the
+on-chain policy.
+
+## Pubnet
+
+Pubnet configuration and implementation surfaces exist, but checked-in
+profiles disable them. There is no published pubnet conformance transaction,
+and the system is not production-ready.
+
+Facilitator pubnet startup fails closed unless operators provide:
+
+- production key encryption;
+- bearer authentication;
+- an explicitly configured `upto` contract;
+- a funded sponsor and configured count of funded channels;
+- calibrated fee ceilings;
+- HTTPS-only, non-local catalog origins;
+- verified-only discovery and no Friendbot development funding.
+
+The current facilitator cannot enable pubnet exact-only: its pubnet startup
+requires an `upto` contract and then advertises both schemes. This does not make
+that contract audited; operator configuration cannot substitute for audit.
+
+Before any pubnet service, also require ABI/Wasm freeze, external audit, SDF and
+x402 TSC outcomes, measured production fee distributions, contract-instance
+and Wasm TTL monitoring/restoration, database backup/restore tests, alerting,
+and incident response.
+
+A paid remote MCP additionally requires explicit pubnet enablement, an
+authenticated transport, signer configuration, an operator-approved network
+and asset, and a durable PostgreSQL budget store.
+
+The MCP process currently has no asset allowlist, does not enforce the testnet
+`enabled` flag in `x402_call_resource`, and does not automatically require HTTPS
+for an external signer URL. Operators must enforce those policies outside the
+process and configure an HTTPS signer. These gaps are additional reasons to
+keep pubnet disabled.
+
+## Vulnerability reporting
+
+Report vulnerabilities privately through the repository's GitHub security
+advisory flow. Do not include sponsor keys, payer keys, signed authorization
+entries, exploitable payloads, or database credentials in public issues.
+
+## Related documents
+
+- [Architecture](ARCHITECTURE.md)
+- [Self-hosting](SELF_HOSTING.md)
+- [Troubleshooting](TROUBLESHOOTING.md)
+- [Remaining Stellar `upto` release work](../x402-stellar-upto/docs/RELEASE_GAPS.md)
