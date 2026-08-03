@@ -1,54 +1,119 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mintlify Starter Kit",
+  "theme": "palm",
+  "name": "openx402",
+  "description": "Build and operate x402 payments on Stellar with openx402.",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#704E00",
+    "light": "#FFD21C",
+    "dark": "#8A6500"
   },
   "favicon": "/favicon.svg",
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg",
+    "href": "/"
+  },
+  "icons": {
+    "library": "lucide"
+  },
+  "fonts": {
+    "family": "Archivo"
+  },
+  "appearance": {
+    "default": "system",
+    "strict": false
+  },
+  "background": {
+    "decoration": "grid"
+  },
+  "styling": {
+    "eyebrows": "breadcrumbs",
+    "codeblocks": {
+      "theme": {
+        "light": "github-light",
+        "dark": "github-dark"
+      }
+    }
+  },
+  "banner": {
+    "content": "Testnet preview: Stellar `exact` is live; `upto` remains proposed and pubnet is gated. [Review release status](/operations/security#pubnet).",
+    "dismissible": true,
+    "type": "warning"
+  },
   "navigation": {
-    "pages": [
+    "groups": [
       {
-        "group": "Getting Started",
+        "group": "Getting started",
+        "icon": "rocket",
         "pages": [
           "index",
           "quickstart"
+        ]
+      },
+      {
+        "group": "Build",
+        "icon": "code-2",
+        "pages": [
+          "guides/http-seller",
+          "guides/buyer-client",
+          "guides/mcp"
+        ]
+      },
+      {
+        "group": "Discover",
+        "icon": "search",
+        "pages": [
+          "concepts/bazaar"
+        ]
+      },
+      {
+        "group": "Operate",
+        "icon": "server-cog",
+        "pages": [
+          "operations/self-hosting",
+          "operations/security",
+          "operations/troubleshooting"
+        ]
+      },
+      {
+        "group": "Understand",
+        "icon": "network",
+        "pages": [
+          "concepts/architecture"
         ]
       }
     ],
     "global": {
       "anchors": [
         {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
+          "anchor": "GitHub",
+          "href": "https://github.com/Ithaca-Labs/openx402",
+          "icon": "github"
         },
         {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
+          "anchor": "Bazaar SDK",
+          "href": "https://www.npmjs.com/package/@openx402/bazaar-sdk",
+          "icon": "package"
         }
       ]
     }
   },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
   "navbar": {
     "links": [
       {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
+        "type": "github",
+        "href": "https://github.com/Ithaca-Labs/openx402"
       }
     ],
     "primary": {
       "type": "button",
-      "label": "Dashboard",
-      "href": "https://app.mintlify.com"
+      "label": "Start building",
+      "href": "/quickstart"
     }
+  },
+  "search": {
+    "prompt": "Search openx402 docs..."
   },
   "contextual": {
     "options": [
@@ -56,17 +121,134 @@
       "view",
       "chatgpt",
       "claude",
-      "perplexity",
-      "mcp",
       "cursor",
       "vscode"
-    ]
+    ],
+    "display": "header"
   },
+  "metadata": {
+    "timestamp": true
+  },
+  "interaction": {
+    "drilldown": false
+  },
+  "seo": {
+    "indexing": "navigable"
+  },
+  "errors": {
+    "404": {
+      "redirect": false,
+      "title": "Page not found",
+      "description": "This openx402 documentation page does not exist."
+    }
+  },
+  "redirects": [
+    {
+      "source": "/docs/GETTING_STARTED",
+      "destination": "/quickstart",
+      "permanent": true
+    },
+    {
+      "source": "/docs/SELLER_GUIDE",
+      "destination": "/guides/http-seller",
+      "permanent": true
+    },
+    {
+      "source": "/docs/BUYER_CLIENT",
+      "destination": "/guides/buyer-client",
+      "permanent": true
+    },
+    {
+      "source": "/docs/MCP",
+      "destination": "/guides/mcp",
+      "permanent": true
+    },
+    {
+      "source": "/docs/BAZAAR",
+      "destination": "/concepts/bazaar",
+      "permanent": true
+    },
+    {
+      "source": "/docs/ARCHITECTURE",
+      "destination": "/concepts/architecture",
+      "permanent": true
+    },
+    {
+      "source": "/docs/SELF_HOSTING",
+      "destination": "/operations/self-hosting",
+      "permanent": true
+    },
+    {
+      "source": "/docs/SECURITY",
+      "destination": "/operations/security",
+      "permanent": true
+    },
+    {
+      "source": "/docs/TROUBLESHOOTING",
+      "destination": "/operations/troubleshooting",
+      "permanent": true
+    }
+  ],
   "footer": {
     "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+      "github": "https://github.com/Ithaca-Labs/openx402"
+    },
+    "links": [
+      {
+        "header": "Build",
+        "items": [
+          {
+            "label": "Quickstart",
+            "href": "/quickstart"
+          },
+          {
+            "label": "HTTP seller",
+            "href": "/guides/http-seller"
+          },
+          {
+            "label": "Buyer client",
+            "href": "/guides/buyer-client"
+          },
+          {
+            "label": "MCP",
+            "href": "/guides/mcp"
+          }
+        ]
+      },
+      {
+        "header": "Operate",
+        "items": [
+          {
+            "label": "Self-hosting",
+            "href": "/operations/self-hosting"
+          },
+          {
+            "label": "Security",
+            "href": "/operations/security"
+          },
+          {
+            "label": "Troubleshooting",
+            "href": "/operations/troubleshooting"
+          }
+        ]
+      },
+      {
+        "header": "Resources",
+        "items": [
+          {
+            "label": "Source code",
+            "href": "https://github.com/Ithaca-Labs/openx402"
+          },
+          {
+            "label": "Bazaar SDK",
+            "href": "https://www.npmjs.com/package/@openx402/bazaar-sdk"
+          },
+          {
+            "label": "Deploy on Railway",
+            "href": "https://railway.com/deploy/uKrE3J"
+          }
+        ]
+      }
+    ]
   }
 }

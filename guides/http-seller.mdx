@@ -1,4 +1,13 @@
-# Build a paid HTTP seller
+---
+title: "Build a paid HTTP seller"
+description: "Protect an Express route with Stellar exact payments and official Bazaar metadata."
+sidebarTitle: "HTTP seller"
+icon: "store"
+keywords:
+  - "x402 seller"
+  - "Express payments"
+  - "Bazaar metadata"
+---
 
 Protect an Express route with Stellar `exact`, advertise official Bazaar
 metadata, and settle through an openx402 facilitator.
@@ -16,7 +25,7 @@ npm install @openx402/bazaar-sdk \
 ```
 
 Use Node.js 22 or newer. The repository's complete runnable version is
-[`examples/rock-paper-scissors/index.ts`](../examples/rock-paper-scissors/index.ts).
+[`examples/rock-paper-scissors/index.ts`](https://github.com/Ithaca-Labs/openx402/blob/main/examples/rock-paper-scissors/index.ts).
 
 ## Complete POST seller
 
@@ -212,10 +221,10 @@ const weather = bazaar.http({
 
 Place `weather.resource` fields and `weather.extensions` in the route's x402
 configuration exactly as in the POST example. The canonical standalone helper
-is [`packages/bazaar-sdk/examples/weather-http.ts`](../packages/bazaar-sdk/examples/weather-http.ts).
+is [`packages/bazaar-sdk/examples/weather-http.ts`](https://github.com/Ithaca-Labs/openx402/blob/main/packages/bazaar-sdk/examples/weather-http.ts).
 
 ## Next steps
 
-- [Run and understand the buyer client](BUYER_CLIENT.md)
-- [Understand catalog identity, trust, and discovery](BAZAAR.md)
-- [Troubleshoot repeated 402s and rejected metadata](TROUBLESHOOTING.md)
+- [Run and understand the buyer client](/guides/buyer-client)
+- [Understand catalog identity, trust, and discovery](/concepts/bazaar)
+- [Troubleshoot repeated 402s and rejected metadata](/operations/troubleshooting)

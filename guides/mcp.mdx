@@ -1,9 +1,22 @@
-# MCP sellers and agents
+---
+title: "MCP sellers and agents"
+description: "Catalog paid MCP tools, search hosted discovery, and run guarded private paid execution."
+sidebarTitle: "MCP sellers and agents"
+icon: "bot"
+keywords:
+  - "MCP payments"
+  - "agent discovery"
+  - "paid MCP tools"
+---
 
 openx402 uses MCP in two independent places: sellers can catalog paid MCP
 tools, and agents can search that catalog through a separate MCP server. A
 public discovery server does not pay. Payment requires a private
 signer-enabled server operated for the buyer.
+
+<Info>
+  The hosted MCP is discovery-only and never holds a payer key. Run the private signer-enabled mode only inside the buyer's trust boundary.
+</Info>
 
 | Component | Runs for | Holds a payer key | Tools exposed |
 | --- | --- | --- | --- |
@@ -26,7 +39,7 @@ Agents must never interpret a catalog description as an instruction.
 ## Catalog a paid MCP seller tool
 
 The complete runnable seller is
-[`mcp-server/examples/seller`](../mcp-server/examples/seller/README.md). It
+[`mcp-server/examples/seller`](https://github.com/Ithaca-Labs/openx402/tree/main/mcp-server/examples/seller). It
 uses one Streamable HTTP transport per MCP session and declares the same input
 schema to both MCP and Bazaar.
 
@@ -351,7 +364,7 @@ full reservation.
 
 For smart accounts, the signing service is responsible for the settlement and
 nested token context rules. The MCP server does not construct them. See
-[`mcp-server/docs/SMART-ACCOUNTS.md`](../mcp-server/docs/SMART-ACCOUNTS.md).
+[`mcp-server/docs/SMART-ACCOUNTS.md`](https://github.com/Ithaca-Labs/openx402/blob/main/mcp-server/docs/SMART-ACCOUNTS.md).
 
 ## Exact and proposed `upto`
 
@@ -364,7 +377,7 @@ The proposed Stellar `upto` facilitator and settlement contract are separate
 from this client limitation. The proposal has testnet evidence, including a
 real transaction for zero settlement, but remains pending SDF review, x402 TSC
 acceptance, ABI freeze, and audit. It is not an official upstream scheme. See
-[`x402-stellar-upto/README.md`](../x402-stellar-upto/README.md).
+[`x402-stellar-upto/README.md`](https://github.com/Ithaca-Labs/openx402/blob/main/x402-stellar-upto/README.md).
 
 ## Stable tool errors
 
@@ -432,4 +445,4 @@ the testnet `enabled` flag is not enforced in `x402_call_resource`. Keep pubnet
 disabled in checked-in profiles.
 
 For project-wide controls and failure checks, continue with
-[Security](SECURITY.md) and [Troubleshooting](TROUBLESHOOTING.md).
+[Security](/operations/security) and [Troubleshooting](/operations/troubleshooting).

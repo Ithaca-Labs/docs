@@ -1,4 +1,12 @@
-# Architecture
+---
+title: "Architecture"
+description: "Understand openx402 system boundaries, settlement, idempotency, cataloging, search, and MCP."
+icon: "network"
+keywords:
+  - "openx402 architecture"
+  - "Stellar facilitator"
+  - "payment settlement"
+---
 
 openx402 separates payment authorization, seller application execution,
 fee-sponsored settlement, cataloging, and agent discovery. The facilitator
@@ -180,7 +188,7 @@ success, including for zero. Hook execution and post-hook invariant checks are
 inside enforcing simulation and the fee gate.
 
 The remaining SDF, x402 TSC, ABI, audit, canonical-client, and pubnet work is
-tracked in [release gaps](../x402-stellar-upto/docs/RELEASE_GAPS.md).
+tracked in [release gaps](https://github.com/Ithaca-Labs/openx402/blob/main/x402-stellar-upto/docs/RELEASE_GAPS.md).
 
 ## On-chain and off-chain state
 
@@ -230,7 +238,7 @@ flowchart LR
 Only rank positions enter RRF; raw full-text scores and cosine distances are
 never compared directly. Missing pgvector, model runtime, embeddings, or
 reranker degrades independently to lexical search. See
-[Search and indexing](../facilitator/docs/SEARCH.md).
+[Search and indexing](https://github.com/Ithaca-Labs/openx402/blob/main/facilitator/docs/SEARCH.md).
 
 ## Optional MCP process
 
@@ -238,12 +246,11 @@ MCP consumes only the public discovery HTTP API and never imports facilitator
 internals or connects to the facilitator database. The public hosted MCP holds
 no payer key and exposes search/get only. A local or private signer-enabled MCP
 adds guarded paid execution with independent budgets and SSRF controls. See the
-[MCP server architecture](../mcp-server/README.md).
+[MCP server architecture](https://github.com/Ithaca-Labs/openx402/blob/main/mcp-server/README.md).
 
 ## Related documents
 
-- [Self-hosting](SELF_HOSTING.md)
-- [Security](SECURITY.md)
-- [Catalog trust boundary](../facilitator/docs/CATALOG-TRUST.md)
-- [Stellar `upto` threat model](../x402-stellar-upto/docs/THREAT_MODEL.md)
-
+- [Self-hosting](/operations/self-hosting)
+- [Security](/operations/security)
+- [Catalog trust boundary](https://github.com/Ithaca-Labs/openx402/blob/main/facilitator/docs/CATALOG-TRUST.md)
+- [Stellar `upto` threat model](https://github.com/Ithaca-Labs/openx402/blob/main/x402-stellar-upto/docs/THREAT_MODEL.md)

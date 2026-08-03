@@ -1,16 +1,28 @@
-# Security
+---
+title: "Security"
+description: "Review openx402 trust boundaries, fixed invariants, key controls, metadata risks, MCP policy, and pubnet gates."
+icon: "shield-check"
+keywords:
+  - "openx402 security"
+  - "Stellar fee sponsorship"
+  - "MCP SSRF"
+---
 
 openx402 is a testnet preview. Exact is implemented and live on testnet.
 Stellar `upto` remains proposed pending SDF review, x402 TSC acceptance, ABI
 freeze, and external audit. Pubnet is disabled in checked-in profiles and the
 project does not claim production readiness.
 
+<Warning>
+  Keep pubnet disabled. The documented release gates are requirements, not optional hardening recommendations.
+</Warning>
+
 Component-specific analysis:
 
-- [Bazaar catalog trust boundary](../facilitator/docs/CATALOG-TRUST.md)
-- [Stellar `upto` threat model](../x402-stellar-upto/docs/THREAT_MODEL.md)
-- [Stellar `upto` security policy](../x402-stellar-upto/SECURITY.md)
-- [MCP smart-account model](../mcp-server/docs/SMART-ACCOUNTS.md)
+- [Bazaar catalog trust boundary](https://github.com/Ithaca-Labs/openx402/blob/main/facilitator/docs/CATALOG-TRUST.md)
+- [Stellar `upto` threat model](https://github.com/Ithaca-Labs/openx402/blob/main/x402-stellar-upto/docs/THREAT_MODEL.md)
+- [Stellar `upto` security policy](https://github.com/Ithaca-Labs/openx402/blob/main/x402-stellar-upto/SECURITY.md)
+- [MCP smart-account model](https://github.com/Ithaca-Labs/openx402/blob/main/mcp-server/docs/SMART-ACCOUNTS.md)
 
 ## Non-custodial fee sponsorship
 
@@ -238,7 +250,7 @@ entries, exploitable payloads, or database credentials in public issues.
 
 ## Related documents
 
-- [Architecture](ARCHITECTURE.md)
-- [Self-hosting](SELF_HOSTING.md)
-- [Troubleshooting](TROUBLESHOOTING.md)
-- [Remaining Stellar `upto` release work](../x402-stellar-upto/docs/RELEASE_GAPS.md)
+- [Architecture](/concepts/architecture)
+- [Self-hosting](/operations/self-hosting)
+- [Troubleshooting](/operations/troubleshooting)
+- [Remaining Stellar `upto` release work](https://github.com/Ithaca-Labs/openx402/blob/main/x402-stellar-upto/docs/RELEASE_GAPS.md)

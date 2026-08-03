@@ -1,11 +1,24 @@
-# Self-hosting openx402
+---
+title: "Self-host openx402"
+description: "Deploy and operate the facilitator, PostgreSQL, search, and optional MCP server."
+sidebarTitle: "Self-hosting"
+icon: "server-cog"
+keywords:
+  - "self-host openx402"
+  - "Docker facilitator"
+  - "Railway deployment"
+---
 
 openx402's required deployment is one facilitator process and one PostgreSQL
 17 instance. PostgreSQL also provides pgvector when semantic search is enabled.
 The MCP server is optional and runs as a separate process.
 
 The checked-in profiles are testnet previews. Pubnet is disabled and is not
-production-ready. See [Security](SECURITY.md#pubnet) before changing that.
+production-ready. See [Security](/operations/security#pubnet) before changing that.
+
+<Warning>
+  Do not enable pubnet until every startup gate, audit, fee calibration, key-management, TTL, backup, and incident-response requirement is satisfied.
+</Warning>
 
 ## Deployment shapes
 
@@ -124,7 +137,7 @@ Important environment variables in the root `.env` file:
 | `FACILITATOR_CURSOR_HMAC_KEY` | Optional stable pagination cursor key. When absent it is derived from the facilitator encryption key. |
 
 The full key surface is in the
-[facilitator configuration reference](../facilitator/docs/CONFIGURATION.md).
+[facilitator configuration reference](https://github.com/Ithaca-Labs/openx402/blob/main/facilitator/docs/CONFIGURATION.md).
 
 ### Catalog origin policy
 
@@ -157,7 +170,7 @@ with `search.semantic.provider: remote`, then point
 variables containing the endpoint and optional bearer token. Provider errors,
 timeouts, invalid dimensions, and missing pgvector degrade to lexical search.
 
-See [Search and indexing](../facilitator/docs/SEARCH.md) for provider contracts,
+See [Search and indexing](https://github.com/Ithaca-Labs/openx402/blob/main/facilitator/docs/SEARCH.md) for provider contracts,
 generation handling, and reindex commands.
 
 ## Running MCP separately
@@ -177,7 +190,7 @@ FACILITATOR_URL=http://localhost:4022 npm start
 The hosted and Docker profiles use `signer.mode: none`; only
 `x402_search_resources` and `x402_get_resource` are registered. Paid execution
 and its authentication, signer, budget, and network requirements are described
-in the [MCP server guide](../mcp-server/README.md).
+in the [MCP server guide](https://github.com/Ithaca-Labs/openx402/blob/main/mcp-server/README.md).
 
 ## Railway one-click deployment
 
@@ -198,7 +211,7 @@ the database password and facilitator encryption key. The Railway profile uses
 failure degrades search to lexical retrieval; payment endpoints remain
 available.
 
-Use the complete [Railway deployment guide](../deploy/railway/README.md) for
+Use the complete [Railway deployment guide](https://github.com/Ithaca-Labs/openx402/blob/main/deploy/railway/README.md) for
 service variables, health checks, and hardening.
 
 ## Operations
@@ -242,7 +255,7 @@ TTLs.
 
 ## Next steps
 
-- [Architecture](ARCHITECTURE.md)
-- [Security](SECURITY.md)
-- [Troubleshooting](TROUBLESHOOTING.md)
-- [Facilitator configuration](../facilitator/docs/CONFIGURATION.md)
+- [Architecture](/concepts/architecture)
+- [Security](/operations/security)
+- [Troubleshooting](/operations/troubleshooting)
+- [Facilitator configuration](https://github.com/Ithaca-Labs/openx402/blob/main/facilitator/docs/CONFIGURATION.md)
