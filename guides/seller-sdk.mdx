@@ -1,0 +1,179 @@
+---
+title: "Seller SDK"
+description: "Declare payment terms and Bazaar metadata once, with official wire-compatible output."
+sidebarTitle: "Seller SDK"
+keywords:
+  - "@openx402/bazaar-sdk"
+  - "createX402Seller"
+  - "bazaar.http"
+  - "bazaar.mcp"
+---
+
+`@openx402/bazaar-sdk` is the seller-side package. It compiles readable
+configuration into the official x402 Bazaar extension. It does not sign,
+settle, hold keys, or replace the facilitator.
+
+```bash
+npm install @openx402/bazaar-sdk
+```
+
+## Declare a complete HTTP resource
+
+Configure server defaults once, then declare the route, payment, and discovery
+metadata together:
+
+```ts
+import { createX402Seller, resolveSellerPublicUrl } from "@openx402/bazaar-sdk";
+import { stellarAssets } from "@openx402/bazaar-sdk/stellar";
+
+const seller = createX402Seller({
+  publicUrl: resolveSellerPublicUrl({
+    localDevelopmentUrl: "http://127.0.0.1:4788",
+  }),
+  network: "stellar:testnet",
+  payTo: process.env.SELLER_PAY_TO!,
+  assets: { XLM: stellarAssets.testnet.XLM },
+  defaults: {
+    scheme: "exact",
+    maxTimeoutSeconds: 60,
+    feesSponsored: true,
+  },
+});
+
+const weather = seller.get("/weather", {
+  payment: { asset: "XLM", amount: "1000" },
+  discovery: {
+    name: "Weather API",
+    description: "Returns current weather for a city.",
+    tags: ["weather", "forecast"],
+    query: {
+      city: {
+        type: "string",
+        description: "City name, such as Mumbai or London.",
+        required: true,
+        example: "Mumbai",
+      },
+    },
+    output: {
+      description: "Current weather conditions.",
+      example: { city: "Mumbai", temperature: 29 },
+    },
+  },
+});
+```
+
+Wire the returned payment config into the official middleware:
+
+```ts
+app.use(paymentMiddleware(weather.paymentConfig, resourceServer));
+app.get(weather.path, weatherHandler);
+```
+
+The route object includes `path`, `routeKey`, `resourceUrl`, `paymentConfig`,
+compiled `resource`, `extensions`, and `compile()`. The keyed payment config is
+important: a bare route config can accidentally payment-gate every route in an
+Express application.
+
+## HTTP metadata inputs
+
+| Seller field | Official output |
+| --- | --- |
+| `description`, `name`, `tags`, `iconUrl`, `mimeType` | Resource metadata. |
+| `query`, `path`, `body`, `headers` | Input examples and JSON Schema properties. |
+| Parameter `description`, `enum`, `format`, `items`, `default` | Schema keywords. |
+| `output.example`, `output.type`, `output.schema` | Output metadata and schema. |
+
+Descriptions are not decorative. They are the source text used by catalog
+search, so keep them specific and truthful. The facilitator never uses a model
+to invent missing parameters, prices, or capabilities.
+
+## Reuse Zod schemas
+
+The adapter is optional, so the core package stays lightweight:
+
+```ts
+import { z } from "zod";
+import { fromZod } from "@openx402/bazaar-sdk/zod";
+
+const query = z.object({
+  city: z.string().describe("City name, such as Mumbai or London."),
+  units: z.enum(["celsius", "fahrenheit"]).optional(),
+});
+
+const weather = seller.get("/weather", {
+  payment: { asset: "XLM", amount: "1000" },
+  discovery: {
+    name: "Weather API",
+    description: "Returns current weather for a city.",
+    input: fromZod(query, { example: { city: "Mumbai", units: "celsius" } }),
+    output: { example: { city: "Mumbai", temperature: 29 } },
+  },
+});
+```
+
+## Declare an MCP tool
+
+Reuse the MCP tool's existing `inputSchema`. MCP identity is the tuple
+`(resource.url, input.toolName)`, not just the URL:
+
+```ts
+const analysis = seller.tool("financial_analysis", {
+  path: "/mcp",
+  payment: { asset: "XLM", amount: "1000" },
+  discovery: {
+    description: "Analyzes a public company using financial data.",
+    transport: "streamable-http",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ticker: { type: "string", description: "Stock ticker, such as AAPL." },
+      },
+      required: ["ticker"],
+    },
+    example: { ticker: "AAPL" },
+    output: { type: "json", example: { score: 8.5 } },
+  },
+});
+```
+
+## Stellar assets
+
+Use the verified asset registry rather than copying contract strings into every
+route:
+
+```ts
+const seller = createX402Seller({
+  network: "stellar:testnet",
+  payTo: process.env.SELLER_PAY_TO!,
+  assets: {
+    USDC: stellarAssets.testnet.USDC,
+  },
+});
+
+const route = seller.post("/analyze", {
+  payment: { asset: "USDC", amount: "10000" },
+  discovery: { name: "Analysis API", description: "Returns an analysis." },
+});
+```
+
+The amount is an atomic-unit string. A seller that accepts an issued asset must
+ensure the recipient account has the required trustline and issuer approval.
+The SDK validates aliases, paths, amounts, public URLs, duplicate routes, and
+required payment defaults at startup.
+
+## Low-level helper
+
+Use `bazaar.http()` or `bazaar.mcp()` when you need to assemble a custom
+`PaymentRequired` response. Both helpers delegate to the upstream
+`@x402/extensions/bazaar` builder. The output remains the official wire shape.
+
+## What the SDK does not do
+
+- It does not run a facilitator.
+- It does not store or access buyer or seller secret keys.
+- It does not decide whether a payment is valid.
+- It does not create trustlines.
+- It does not add proprietary x402 fields.
+
+See [HTTP seller](/guides/http-seller), [MCP seller](/guides/mcp), and
+[Bazaar concepts](/concepts/bazaar) for the runtime integration.

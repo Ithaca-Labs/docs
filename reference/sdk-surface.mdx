@@ -1,0 +1,222 @@
+---
+title: "Seller SDK reference"
+description: "Every public export, route helper, schema adapter, asset alias, and validation rule in @openx402/bazaar-sdk."
+sidebarTitle: "SDK surface"
+keywords:
+  - "bazaar.http"
+  - "bazaar.mcp"
+  - "createX402Seller"
+  - "fromZod"
+  - "stellarAssets"
+---
+
+`@openx402/bazaar-sdk` is a compiler and metadata helper. It never holds a
+secret, signs a payment, calls a facilitator, creates a trustline, or submits a
+Stellar transaction. The official x402 middleware remains responsible for
+payment handling.
+
+Install the package:
+
+```bash
+npm install @openx402/bazaar-sdk
+```
+
+## Entry points and exports
+
+| Import | Exports |
+| --- | --- |
+| `@openx402/bazaar-sdk` | `bazaar`, `http`, `mcp`, `createX402Seller`, `resolveSellerPublicUrl`, `BazaarConfigError`, `SellerConfigError`, types, and `isCompiledInputSchema`. |
+| `@openx402/bazaar-sdk/stellar` | `stellarAssets.testnet.XLM`, `.USDC`, `stellarAssets.pubnet.XLM`, `.USDC`. |
+| `@openx402/bazaar-sdk/zod` | `fromZod`, `ZodAdapterError`, and `FromZodOptions`. Requires Zod 4 or the Zod 4 API exposed by Zod 3.25+. |
+| `@openx402/bazaar-sdk/seller` | Seller factory and seller route/tool types. |
+
+The root entry point does not import Stellar SDK or Zod. Sellers using only
+`bazaar.http` do not install those optional integrations accidentally.
+
+## Low-level helpers
+
+### `bazaar.http(config)`
+
+Accepts `method`, service metadata, query/path/body/header parameter maps, body
+encoding, and output metadata. It compiles to the official Bazaar declaration:
+
+```ts
+const metadata = bazaar.http({
+  method: "POST",
+  description: "Runs one analysis.",
+  serviceName: "Analysis API",
+  tags: ["finance", "analysis"],
+  body: {
+    ticker: {
+      type: "string",
+      description: "Stock ticker, such as AAPL.",
+      required: true,
+      example: "AAPL",
+    },
+  },
+  output: {
+    type: "json",
+    example: { score: 8.5 },
+  },
+});
+```
+
+### `bazaar.mcp(config)`
+
+Reuses the MCP tool's existing `inputSchema` and requires `toolName`. Parameter
+descriptions remain in `inputSchema.properties`; the helper does not create a
+second schema language.
+
+Both helpers expose `{ resource, extensions: { bazaar }, compile() }` and delegate
+to the upstream `@x402/extensions/bazaar` builder. Output description is carried
+as JSON Schema annotation because the official builder has no separate output
+description field.
+
+## Seller factory
+
+`createX402Seller(config)` eliminates duplicated method, path, public URL, asset,
+network, timeout, and sponsorship values while keeping the official middleware
+as the runtime boundary.
+
+```ts
+const seller = createX402Seller({
+  publicUrl: "https://api.example.com",
+  network: "stellar:testnet",
+  payTo: process.env.SELLER_PAY_TO!,
+  assets: { XLM: stellarAssets.testnet.XLM },
+  defaults: {
+    scheme: "exact",
+    maxTimeoutSeconds: 60,
+    feesSponsored: true,
+  },
+});
+
+const route = seller.post("/analyze", {
+  payment: { asset: "XLM", amount: "1000" },
+  discovery: {
+    name: "Analysis API",
+    description: "Runs one financial analysis.",
+    body: { ticker: { type: "string", required: true, example: "AAPL" } },
+    output: { example: { score: 8.5 } },
+  },
+});
+
+app.use(paymentMiddleware(route.paymentConfig, resourceServer));
+app.post(route.path, handler);
+```
+
+The factory exposes these HTTP methods:
+
+```text
+seller.get(path, config)
+seller.post(path, config)
+seller.put(path, config)
+seller.patch(path, config)
+seller.delete(path, config)
+seller.head(path, config)
+```
+
+Every returned route includes `method`, `path`, `routeKey`, `resourceUrl`,
+`paymentConfig`, `resource`, `extensions`, and `compile()`. `paymentConfig` is
+keyed as `METHOD /path`, so it cannot accidentally become a wildcard route.
+
+## MCP seller tools
+
+```ts
+const tool = seller.tool("financial_analysis", {
+  path: "/mcp",
+  payment: { asset: "XLM", amount: "1000" },
+  discovery: {
+    description: "Analyzes a public company.",
+    transport: "streamable-http",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ticker: { type: "string", description: "Stock ticker, such as AAPL." },
+      },
+      required: ["ticker"],
+    },
+    example: { ticker: "AAPL" },
+    output: { type: "json", example: { score: 8.5 } },
+  },
+});
+```
+
+The returned tool has `toolName`, `path`, `resourceUrl`, one resolved
+`paymentOption`, `resource`, `extensions`, and `compile()`. Duplicate tool names
+at the same path are rejected. MCP identity remains `(resource.url,
+input.toolName)` at catalog time.
+
+## Payment inputs and assets
+
+`PaymentInput` requires an asset alias and an atomic-unit amount:
+
+```ts
+payment: {
+  asset: "USDC",
+  amount: "10000",
+  // optional per-route overrides:
+  // network, payTo, scheme, maxTimeoutSeconds, feesSponsored, extra
+}
+```
+
+Raw addresses are deliberately not accepted in `payment.asset`; register a
+readable alias in `assets`. Amounts are `string | bigint`, never floating-point
+JavaScript numbers. `extra` is merged after `extra.areFeesSponsored`; the SDK
+does not invent other protocol fields.
+
+The optional Stellar registry derives native XLM SAC IDs from the correct
+network passphrase and imports USDC addresses from `@x402/stellar`:
+
+```ts
+stellarAssets.testnet.XLM
+stellarAssets.testnet.USDC
+stellarAssets.pubnet.XLM
+stellarAssets.pubnet.USDC
+```
+
+The seller remains responsible for trustlines, issuer authorization, and
+whether the recipient can receive the selected issued asset.
+
+## `fromZod`
+
+`fromZod(schema, { example })` converts an object schema to the compiled input
+shape while preserving descriptions, enums, optional fields, nested properties,
+and required fields. If an example is supplied, it is validated by the same Zod
+schema before compilation.
+
+```ts
+const input = fromZod(
+  z.object({
+    ticker: z.string().describe("Stock ticker, such as AAPL."),
+    depth: z.enum(["quick", "deep"]).optional(),
+  }),
+  { example: { ticker: "AAPL", depth: "deep" } },
+);
+```
+
+It throws `ZodAdapterError` with path-aware issues for a non-object schema or an
+invalid example. The adapter only compiles discovery metadata; request
+validation should still run in the seller's own handler.
+
+## Public URL resolution
+
+`resolveSellerPublicUrl` uses this precedence:
+
+1. explicit `SELLER_PUBLIC_URL`/option override;
+2. Railway's `RAILWAY_PUBLIC_DOMAIN` as an HTTPS origin;
+3. an explicitly supplied local development URL.
+
+Hosted cataloging requires HTTPS and rejects private or loopback origins unless
+the facilitator is running with development-only local-origin policy.
+
+## Validation failures
+
+The SDK rejects invalid paths, unsupported networks, malformed Stellar payTo
+addresses, missing aliases, non-integer/negative amounts, invalid timeout and
+scheme values, malformed public URLs, duplicate route keys, and duplicate MCP
+tool/path tuples at construction time. These are seller configuration errors,
+not payment rejection reasons.
+
+See [seller SDK guide](/guides/seller-sdk), [catalog lifecycle](/concepts/catalog-lifecycle),
+and [HTTP seller](/guides/http-seller) for the runtime wiring.

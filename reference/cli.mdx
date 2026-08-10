@@ -1,0 +1,158 @@
+---
+title: "CLI and maintenance commands"
+description: "Operational, indexing, conformance, and evaluation commands shipped with the facilitator."
+sidebarTitle: "CLI"
+keywords:
+  - "npm scripts"
+  - "index search"
+  - "benchmark commands"
+  - "key management"
+---
+
+Run commands from `facilitator/`. The service uses `tsx` for maintenance
+commands and writes durable state to the configured PostgreSQL database.
+
+## Build and service
+
+```bash
+npm install
+npm run typecheck
+npm run build
+npm run dev
+npm start
+```
+
+`npm run build` builds the published Bazaar SDK first and then compiles the
+facilitator. `npm run dev` watches `src/server.ts`; `npm start` runs the
+compiled service from `dist/`.
+
+## Database and keys
+
+```bash
+npm run migrate
+STELLAR_SECRET=S... npm run keys -- rotate-sponsor stellar:testnet
+STELLAR_SECRET=S... npm run keys -- add-channel stellar:testnet
+npm run keys -- disable-channel stellar:testnet G...
+```
+
+The key CLI accepts `rotate-sponsor`, `add-channel`, or `disable-channel`, then
+the network and optional channel address. Key material is encrypted before insertion into `managed_keys`; the
+encryption key is supplied through the configured environment variable. Never
+put a Stellar secret in YAML, a command history, or a client payload.
+
+## Search index
+
+```bash
+npm run index -- status
+npm run index -- backfill
+npm run index -- reindex
+npm run index -- revive
+```
+
+`status` reports active generation, provider/vector health, queue depth, and
+dead-letter jobs. `backfill` enqueues missing vectors. `reindex` creates or
+activates a new generation according to the configured model identity.
+`revive` requeues dead-lettered jobs after an operator fixes the underlying
+provider or document problem.
+
+Indexing jobs are safe across replicas because claims use PostgreSQL row locks,
+leases, and fencing tokens. Payment requests do not wait for embedding work.
+
+## Fast search checks
+
+```bash
+npm run evaluate
+npm run benchmark:model-report
+npm run test:live-model
+```
+
+The first command runs the small checked-in search evaluator. The model report
+describes the local embedding runtime. `test:live-model` loads a pinned model,
+checks dimension, normalization, determinism, mismatch rejection, and artifact
+checksum. Set `FACILITATOR_LIVE_MODEL_REPO=Xenova/bge-m3` and
+`FACILITATOR_LIVE_MODEL_DIM=1024` to exercise the shipped BGE-M3 path.
+
+## Benchmark lifecycle
+
+### Controlled dataset
+
+```bash
+npm run benchmark:fetch-cdp
+npm run benchmark:generate-candidates
+npm run benchmark:generate
+npm run benchmark:validate
+OPENROUTER_API_KEY=... npm run benchmark:judge
+npm run benchmark:import-human -- /path/to/human-review.jsonl
+npm run benchmark:calibration
+npm run benchmark:gates
+```
+
+The CDP fetch and candidate-generation steps are optional development inputs.
+The judge reads `OPENROUTER_API_KEY` only from the environment and defaults to
+`deepseek/deepseek-v4-flash-0731`. Human calibration is a separate import; a
+model response is never relabeled as human review.
+
+### Production retrieval evaluation
+
+```bash
+TEST_DATABASE_URL=postgresql://... \
+  FACILITATOR_EMBEDDING_URL=https://... \
+  npm run benchmark:evaluate
+```
+
+The release evaluator creates an isolated PostgreSQL schema, proves its table
+ownership, seeds the frozen corpus, runs lexical/semantic/hybrid/reranked
+profiles through `SearchService`, and drops the schema after the run. It never
+truncates an operator's catalog.
+
+### Handwritten evaluation v2
+
+```bash
+npm run benchmark:v2:status
+npm run benchmark:v2:development-ci
+npm run benchmark:v2:gates
+```
+
+These commands operate on the versioned `handwritten-evals/` artifacts and
+report status without silently converting provisional labels into release
+evidence. See [evaluation workflow](/concepts/evaluation-workflow).
+
+## Ecosystem cohort
+
+The source-diverse benchmark has separate commands so its provenance cannot be
+confused with the controlled Stellar fixture corpus:
+
+```bash
+npm run benchmark:fetch-ecosystem
+npm run benchmark:probe-ecosystem
+npm run benchmark:seed-ecosystem-queries
+npm run benchmark:import-ecosystem -- /path/to/artifact.json
+npm run benchmark:validate-ecosystem
+npm run benchmark:evaluate-ecosystem
+```
+
+Foreign snapshots are not automatically redistributed under this repository's
+Apache-2.0 license. The fetch manifest, hashes, transformed `.example` fixtures,
+and provenance metadata are the reproducible boundary.
+
+## Tests and release checks
+
+```bash
+npm test
+npm run test:unit
+npm run test:integration
+npm run test:live
+npm run test:sdk
+npm run licenses
+npm audit --omit=dev
+```
+
+`test:live` submits real testnet transactions and requires funded accounts and
+the configured facilitator. Integration tests require PostgreSQL. License
+checks cover the locked dependency tree; the OpenZeppelin Relayer/AGPL path is
+not a base dependency.
+
+For the full release gate, run the benchmark validation, human calibration,
+model/index completeness, latency thresholds, adversarial checks, and final
+report together. A green unit suite alone is not a search-quality or pubnet
+conformance claim.

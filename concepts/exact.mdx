@@ -1,0 +1,68 @@
+---
+title: "Exact payments"
+description: "Use the shipped Stellar exact scheme with canonical x402 clients and sponsored fees."
+sidebarTitle: "Exact"
+keywords:
+  - "exact Stellar scheme"
+  - "@x402/stellar"
+  - "fee sponsorship"
+---
+
+`exact` authorizes one fixed atomic amount. It is the shipped Stellar scheme
+and the critical path for the public testnet preview.
+
+## Payment flow
+
+1. The seller returns HTTP 402 with `PaymentRequired`.
+2. The buyer checks network, asset, amount, `payTo`, and timeout.
+3. The canonical Stellar client signs the Soroban authorization entry.
+4. The seller retries with the standard payment header.
+5. The facilitator verifies and enforcing-simulates the signed invocation.
+6. A channel account becomes the transaction source and the sponsor pays the
+   fee bump.
+7. The seller receives a standard settlement response and the resource result.
+
+The facilitator does not take custody of the payment asset. It is never the
+payer or recipient.
+
+## Canonical client
+
+```ts
+import { x402Client, x402HTTPClient } from "@x402/core/client";
+import { createEd25519Signer } from "@x402/stellar";
+import { ExactStellarScheme } from "@x402/stellar/exact/client";
+
+const network = "stellar:testnet" as const;
+const client = new x402Client().register(
+  network,
+  new ExactStellarScheme(
+    createEd25519Signer(process.env.BUYER_SECRET_KEY!, network),
+  ),
+);
+const http = new x402HTTPClient(client);
+```
+
+The buyer signs only the payment authorization. The facilitator reconstructs
+the outer transaction and rejects client-controlled source and fee data.
+
+## Verification guarantees
+
+The exact path checks the standard `{ transaction }` payload, contract and
+function, payer, recipient, configured asset, atomic amount, authorization
+signature, expiration, and authorization tree. Enforcing simulation executes
+custom `__check_auth` accounts and token behavior before a sponsored
+transaction is submitted. The final event check requires exactly one matching
+SEP-41 transfer event and expected balance changes.
+
+## Atomic-unit amounts and assets
+
+Amounts are integer strings. The facilitator supports configured SEP-41/SAC
+assets, including testnet XLM SAC and testnet USDC in the checked-in profile.
+An issued asset still requires the payer and recipient to have the appropriate
+trustline and issuer authorization.
+
+## Evidence boundary
+
+The repository contains real testnet exact settlement hashes and an official
+testnet x402 E2E result. Pubnet exact evidence is not claimed yet. See
+[release status](/operations/security#pubnet) before enabling a network.

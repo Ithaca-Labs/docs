@@ -1,0 +1,129 @@
+---
+title: "Search and indexing"
+description: "Understand deterministic catalog text, hybrid retrieval, vector generations, and graceful degradation."
+sidebarTitle: "Search and indexing"
+keywords:
+  - "pgvector"
+  - "hybrid search"
+  - "RRF"
+  - "BGE-M3"
+  - "embeddings"
+---
+
+Search is an offline index over seller-declared Bazaar metadata. It never asks
+an LLM to invent descriptions, prices, parameters, or capabilities.
+
+## Indexing pipeline
+
+```text
+verified PaymentPayload
+  -> official Bazaar validation
+  -> bounds and provenance checks
+  -> deterministic readable search text
+  -> PostgreSQL tsvector document
+  -> PostgreSQL embedding job
+  -> typed model generation and HNSW vector table
+```
+
+Cataloging writes the document and queues embedding work after payment
+decisions. Request latency never waits for model inference. Workers claim jobs
+with PostgreSQL leases and fencing tokens, batch provider calls, retry with
+backoff, and dead-letter poisoned documents.
+
+## Canonical search text
+
+The formatter uses declared fields only:
+
+```text
+Service: Weather API
+Description: Returns current weather and forecasts for a city.
+Type: HTTP GET
+Parameters:
+- city (required): City name, required.
+- units: Temperature units, celsius or fahrenheit.
+Output: json
+Tags: weather, forecast, climate
+Payment: stellar:testnet, exact, 1000 USDC
+```
+
+MCP fields include `toolName` and parameter descriptions from the existing
+`inputSchema`. Missing fields are omitted, not inferred.
+
+## Retrieval
+
+1. Apply structured filters before ranking.
+2. Retrieve PostgreSQL full-text candidates.
+3. Retrieve vector candidates from the active model generation.
+4. Fuse candidate ranks with reciprocal-rank fusion.
+5. Optionally rerank the fused head.
+6. Apply deterministic cursor and origin-diversity tie breaks.
+
+The production formula is:
+
+```text
+score(document) = sum(weight_branch / (rrf_k + rank_branch))
+```
+
+Only ranks enter the formula. PostgreSQL `ts_rank_cd` is not BM25, and cosine
+distance is never added to it as if both were comparable scores.
+
+The checked-in self-hosted profile uses lexical weight `0.7`, semantic weight
+`0.3`, `rrf_k: 20`, and candidate pools of `250`. Search evaluation also
+measured a tuned development configuration, but that does not silently change
+the shipped profile. Operators should publish which configuration produced a
+benchmark result.
+
+## Model generations
+
+Every generation records:
+
+```text
+provider, model_id, model_revision, dimension, pooling, normalization
+```
+
+Only one generation is active for serving. A model, revision, dimension,
+pooling, or normalization change creates a new typed vector table and requires
+an explicit reindex. Vectors from different generations are never compared.
+
+The default local embedding identity is BAAI/bge-m3 through the pinned
+`Xenova/bge-m3` ONNX artifact at 1024 dimensions. The Railway profile uses an
+OpenAI-compatible remote embedding endpoint and does not download model files.
+
+The checked-in model licence record is:
+
+| Purpose | Model/artifact | Dimensions | Licence | Runtime status |
+| --- | --- | ---: | --- | --- |
+| Local embedding | `BAAI/bge-m3` / pinned `Xenova/bge-m3` ONNX | 1024 | MIT | Supported when the optional local runtime is installed. |
+| Reranking target | `BAAI/bge-reranker-v2-m3` | N/A | Apache-2.0 | Optional; no checked-in local ONNX export, so disabled by default. |
+| Hosted embedding | Operator-selected OpenAI-compatible provider | Provider-defined | Provider-defined | Remote only; no model download. |
+
+The facilitator validates the returned vector dimension before storage. A
+provider whose terms or weights do not satisfy an operator's redistribution
+policy must stay behind the remote-provider interface or be disabled.
+
+## Degradation ladder
+
+| Available path | Result |
+| --- | --- |
+| Lexical + semantic + reranker | Hybrid retrieval, then reranked head. |
+| Lexical + semantic | Hybrid RRF. |
+| Lexical only | PostgreSQL FTS results. |
+| Provider timeout or invalid dimension | FTS fallback with `partialResults`. |
+| Missing pgvector | FTS-only mode; payment endpoints remain healthy. |
+| Reranker unavailable with fallback enabled | Hybrid results. |
+
+Use `/analytics/v1/search/status` to inspect provider health, active generation,
+queue depth, coverage, and the exact degraded reason.
+
+## Query safety and provenance
+
+Queries are normalized before PostgreSQL parsing. Empty or stopword-only input
+becomes a guaranteed no-match query. Seller descriptions are untrusted content:
+they are inert metadata and never become agent instructions.
+
+Search responses carry an `x-search-session-id`. A later resource fetch can use
+that identifier to record search-to-resource conversion. This signal is
+operator analytics, not a relevance judgment.
+
+See [evaluation](/concepts/evaluation) for measured model and retrieval results
+and [configuration](/reference/configuration) for provider settings.

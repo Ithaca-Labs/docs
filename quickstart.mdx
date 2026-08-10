@@ -2,7 +2,6 @@
 title: "Quickstart"
 description: "Build, pay, and catalog a real paid HTTP endpoint on Stellar testnet."
 sidebarTitle: "Quickstart"
-icon: "rocket"
 keywords:
   - "openx402 quickstart"
   - "Stellar testnet"
@@ -43,6 +42,11 @@ client locally. The hosted MCP does not hold a buyer key and cannot pay.
 Use a testnet-only buyer account. Never commit or paste a valuable secret into
 browser code. This example charges 1,000 atomic units of testnet native XLM
 through its Stellar Asset Contract.
+
+If you just funded the buyer with Friendbot, wait until the account is visible
+to Soroban RPC before running the client. The canonical Stellar client performs
+a pre-signing simulation, and a newly created account can take a few ledgers to
+propagate from Horizon to RPC.
 
 ## Why the seller needs a public HTTPS URL
 
@@ -161,8 +165,13 @@ ownership or service quality.
 ## What to read next
 
 - [Build a paid HTTP seller](/guides/http-seller)
+- [Use the seller SDK](/guides/seller-sdk)
 - [Understand the canonical buyer](/guides/buyer-client)
 - [Declare and search Bazaar metadata](/concepts/bazaar)
+- [Understand hybrid search](/concepts/search)
 - [Catalog and discover paid MCP tools](/guides/mcp)
+- [Build a metered resource with proposed `upto`](/guides/upto)
 - [Deploy your own facilitator](/operations/self-hosting)
+- [Tune the deployment](/reference/configuration)
+- [Use the HTTP API](/reference/api)
 - [Troubleshoot the flow](/operations/troubleshooting)

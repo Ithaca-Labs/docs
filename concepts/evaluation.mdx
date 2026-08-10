@@ -1,0 +1,136 @@
+---
+title: "Search evaluation"
+description: "Read the reproducible embedding bakeoff, production retrieval results, metrics, and release limitations."
+sidebarTitle: "Evaluation"
+keywords:
+  - "search benchmark"
+  - "MRR"
+  - "nDCG"
+  - "Recall@20"
+  - "embedding bakeoff"
+---
+
+The repository includes a development evaluation for the Bazaar search stack.
+It is separate from protocol conformance: a search score cannot prove that a
+payment was valid, and a successful payment cannot prove that ranking is good.
+
+<Warning>
+  The current release-gates report is blocked. The results below are measured
+  development evidence, not a claim that the search release gate has passed.
+</Warning>
+
+## Dataset and method
+
+The current v2 development corpus contains 500 catalog records, 100 queries,
+and 1,442 relevance judgments in the checked-in report. The model bakeoff uses
+the development split and 20 measured latency samples per model. The corpus is
+synthetic and human-reviewed; it is not a live catalog.
+
+Judgments use grades 0-3. Hard constraints are evaluated deterministically
+before semantic grading. The full evaluation records dataset hashes, model
+identity, dimensions, run files, and limitations. OpenRouter DeepSeek is used
+only as an optional relevance judge; it does not generate indexed catalog text.
+
+## Embedding quality
+
+These values come from `facilitator/handwritten-evals/reports/embedding-bakeoff-v2.json`
+(generated 2026-08-09). Metrics are development-split aggregates. Higher is
+better.
+
+| Model | MRR | nDCG@10 | Recall@20 | bpref | Dimensions |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Qwen3-Embedding-8B | 0.904 | 0.835 | 0.961 | 0.798 | 4096 |
+| OpenAI `text-embedding-3-large` | 0.893 | 0.818 | 0.996 | 0.763 | 3072 |
+| Voyage-4 | 0.857 | 0.823 | 0.980 | 0.784 | 1024 |
+| OpenAI `text-embedding-3-small` | 0.814 | 0.774 | 0.912 | 0.710 | 1536 |
+
+<Frame caption="Embedding model retrieval quality on the Stellar Bazaar v2 development split.">
+  <img src="/images/evaluation/embedding-quality.png" alt="Bar chart comparing MRR, nDCG at 10, Recall at 20, and bpref for four embedding models." />
+</Frame>
+
+## Embedding latency
+
+The same report measured provider latency on 20 samples. Lower is better.
+
+| Model | p50 | p95 | Mean | Samples | Dimensions |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Qwen3-Embedding-8B | 3152 ms | 13035 ms | 3784 ms | 20 | 4096 |
+| OpenAI `text-embedding-3-large` | 968 ms | 1251 ms | 991 ms | 20 | 3072 |
+| Voyage-4 | 704 ms | 869 ms | 716 ms | 20 | 1024 |
+| OpenAI `text-embedding-3-small` | 688 ms | 797 ms | 657 ms | 20 | 1536 |
+
+<Frame caption="Single-query embedding latency from 20 timed samples per model.">
+  <img src="/images/evaluation/embedding-latency.png" alt="Log-scale bar chart comparing p50 and p95 embedding latency for four models." />
+</Frame>
+
+These are the two primary views of the same tradeoff: quality and latency. The
+additional plots below are retained as exploratory diagnostics and are clearly
+separated from the release-gate evidence.
+
+## Production search path
+
+The real facilitator search run used PostgreSQL plus the pinned local BGE-M3
+embedding path on an isolated database seeded with the benchmark catalog. The
+development report measured these configurations:
+
+The development report measured four production-search profiles. Real lexical
+scored MRR `0.6121`, nDCG@10 `0.5334`, Recall@20 `0.6828`, and bpref
+`0.5068`. Real BGE-M3 semantic scored `0.8325`, `0.7160`, `0.8422`, and
+`0.6837`. The shipped hybrid default (`0.7/0.3`, `rrf_k=20`) scored `0.6740`,
+`0.6114`, `0.7859`, and `0.5189`; the tuned profile (`0.2/0.8`, `rrf_k=6`)
+scored `0.8441`, `0.7241`, `0.8795`, and `0.6907`, respectively.
+
+The tuned profile is evidence for a follow-up configuration decision, not an
+automatic production change. The report explicitly notes that the development
+corpus is synthetic, judgments are incomplete, and no click or payment
+conversion validation exists yet.
+
+<Accordion title="Additional development plots">
+  <Frame caption="Development fusion comparison using the benchmark's pool-build stand-in.">
+    <img src="/images/evaluation/search-fusion.png" alt="Horizontal bar chart comparing lexical, dense, and hybrid nDCG at 10." />
+  </Frame>
+  <Frame caption="Quality versus p95 embedding latency for the development model bakeoff.">
+    <img src="/images/evaluation/quality-latency.png" alt="Scatter plot comparing nDCG at 10 with p95 latency for four embedding models." />
+  </Frame>
+  These plots are exploratory development artifacts. The fusion chart uses a
+  pool-build stand-in and must not be read as a production BM25 claim. The
+  quality-latency plot describes the same 20-sample provider measurement shown
+  above; neither chart opens the blocked release gate.
+</Accordion>
+
+## Metrics and release gates
+
+The evaluator reports MRR, Recall@20, nDCG@5/nDCG@10, bpref, judged@k,
+hard-filter violations, no-result accuracy, adversarial top-1 rate, provider
+concentration, embedding failures, reranker lift, and p50/p95/p99 latency.
+
+The release gate requires, among other checks:
+
+- zero hard-filter violations;
+- zero invalid indexed records;
+- complete current run and pool artifacts;
+- human calibration and adjudication evidence;
+- hybrid improvement over lexical on the frozen release split;
+- reranker improvement or parity when enabled;
+- perfect no-result accuracy;
+- adversarial listings not dominating the top result; and
+- configured latency targets.
+
+The checked-in `release-gates-v2.json` is currently `blocked` because pool
+snapshot, final holdout ledger, calibration/agreement, and final report inputs
+are incomplete. Do not present the development table as a passed release gate.
+
+## Reproduce the evaluation
+
+From `facilitator/`:
+
+```bash
+npm run benchmark:v2:status
+npm run benchmark:v2:development-ci
+npm run benchmark:gates
+```
+
+For the formal release workflow, follow
+`facilitator/docs/SEARCH-BENCHMARK.md`. Keep API keys in the environment. Never
+commit OpenRouter responses containing credentials or claim generated labels as
+human labels.

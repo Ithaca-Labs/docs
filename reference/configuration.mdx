@@ -1,0 +1,172 @@
+---
+title: "Configuration reference"
+description: "Configure networks, assets, sponsorship, search, cataloging, limits, and operations."
+sidebarTitle: "Configuration"
+keywords:
+  - "FACILITATOR_CONFIG"
+  - "PostgreSQL"
+  - "OpenRouter"
+  - "fee ceilings"
+  - "search configuration"
+---
+
+The facilitator loads YAML from `FACILITATOR_CONFIG` and reads secrets through
+named environment variables. The default self-hosted profile is
+`facilitator/config/self-hosted.yaml`; the Railway profile is
+`facilitator/config/railway.yaml`.
+
+## Minimal environment
+
+```dotenv
+DATABASE_URL=postgresql://user:password@postgres:5432/openx402
+FACILITATOR_CONFIG=config/self-hosted.yaml
+FACILITATOR_KEY_ENCRYPTION_KEY=<base64-encoded 32-byte key>
+```
+
+The development testnet profile can create encrypted sponsor and channel keys
+and fund them through Friendbot. It never does this for pubnet.
+
+## Service and limits
+
+| Key | Default | What it controls |
+| --- | --- | --- |
+| `server.port` | `4022` | HTTP listener; `PORT` overrides it. |
+| `database_url_env` | `DATABASE_URL` | PostgreSQL URL variable. |
+| `api_keys_env` | `FACILITATOR_API_KEYS` | Comma-separated bearer keys. |
+| `max_request_bytes` | `262144` | JSON request limit. |
+| `max_concurrent_simulations` | `20` | In-process simulation semaphore. |
+| `max_simulations_per_key_per_minute` | `30` | Database-backed simulation rate. |
+| `max_pending_settlements` | `1000` | Unresolved-settlement backpressure. |
+| `channel_lease_ms` | `30000` | Cross-replica channel lease. |
+| `settle_poll_ms` | `1000` | Finality polling interval. |
+| `settle_timeout_ms` | `30000` | Request-time polling deadline. |
+
+Sponsor budgets are database-backed and shared by replicas:
+
+```yaml
+limits:
+  max_sponsored_stroops_per_key_per_day: 20000000
+  max_global_sponsored_stroops_per_day: 200000000
+```
+
+Do not increase fee ceilings until legitimate enforcing-simulation p99 values
+have been measured for every enabled scheme and payer class.
+
+## Networks and assets
+
+Each network declares an RPC endpoint, sponsor/channel source, allowed assets,
+scheme fee ceilings, and a maximum seller timeout:
+
+```yaml
+networks:
+  stellar:testnet:
+    enabled: true
+    rpc_url: https://soroban-testnet.stellar.org
+    horizon_url: https://horizon-testnet.stellar.org
+    development_auto_fund: true
+    channel_account_count: 3
+    max_timeout_seconds: 300
+    assets:
+      - contract: CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA
+        symbol: USDC
+        decimals: 7
+        max_payment: "1000000000"
+```
+
+Amounts remain decimal strings in atomic units. The facilitator does not
+convert dollars, assume seven decimals, or trust the configured symbol for
+settlement. `asset.contract` is the binding value.
+
+The checked-in testnet profile includes native XLM SAC and testnet USDC. Pubnet
+is packaged but disabled until audited `upto` deployment, funded channels,
+authentication, and measured pubnet fee ceilings are supplied.
+
+## Bazaar and discovery
+
+```yaml
+indexing:
+  auto_catalog: true
+  index_on: verified
+  require_valid_schema: true
+  stale_after_hours: 168
+  max_metadata_bytes: 131072
+  fetch_icons: false
+
+discovery:
+  enabled: true
+  default_page_size: 20
+  max_page_size: 50
+  cursor_ttl_minutes: 15
+  include_stale: false
+  include_unverified: false
+```
+
+Cataloging validates official Bazaar metadata, bounds and sanitizes it, checks
+route templates after percent-decoding, and soft-fails invalid declarations.
+Cataloging never changes a valid payment result. Icons are stored as URLs and
+never fetched during payment processing.
+
+## Search profiles
+
+The search worker is optional. The payment service boots without embeddings,
+reranking, pgvector, or external keys.
+
+| Mode | Semantic provider | Reranker | Result |
+| --- | --- | --- | --- |
+| Hosted Railway | Remote OpenAI-compatible endpoint | Disabled | Hybrid when provider is healthy; FTS fallback. |
+| Self-hosted local | Optional BGE-M3 ONNX | Disabled by default | Local hybrid or lexical-only. |
+| Lightweight | Disabled | Disabled | PostgreSQL full-text only. |
+
+```yaml
+search:
+  lexical:
+    enabled: true
+    weight: 0.7
+    candidate_count: 250
+  semantic:
+    enabled: true
+    provider: remote
+    model: openai/text-embedding-3-small
+    dimension: 1536
+    weight: 0.3
+    timeout_ms: 5000
+    remote_url_env: FACILITATOR_EMBEDDING_URL
+    remote_api_key_env: OPENROUTER_API_KEY
+  reranking:
+    enabled: false
+    fallback_to_hybrid: true
+  rrf_k: 20
+```
+
+Every vector generation records provider, model, revision, dimension, pooling,
+and normalization. Changing any of those creates a new typed generation and
+requires an explicit reindex. A provider timeout or missing model degrades to
+lexical retrieval and reports `partialResults`.
+
+## Fixed security invariants
+
+Operators cannot configure away payment correctness or security. These are
+fixed: signed asset, payer, recipient, network, contract, amount, maximum,
+facilitator, and settlement-ID binding; auth-tree validation; ledger-expiry
+ordering; record-then-enforcing simulation; enforcing fee gates; channel
+fencing; durable hash-before-send; transaction-hash polling; exact transfer or
+`upto` pull/pay/refund event checks; terminal zero settlement; hook
+self/token-contract rejection; and pubnet development-funding prohibition.
+
+Catalog invariants are also fixed: official schema validation, soft-drop
+behavior, MCP identity as `(resource.url, toolName)`, append-only versions and
+payment options, and no in-place overwrite of another seller's `payTo`.
+
+## Index operations
+
+Run these commands from `facilitator/`:
+
+```bash
+npm run index -- status
+npm run index -- backfill
+npm run index -- reindex
+npm run index -- revive
+```
+
+Jobs use PostgreSQL row locks, leases, and fencing tokens. No Redis or separate
+worker database is required.

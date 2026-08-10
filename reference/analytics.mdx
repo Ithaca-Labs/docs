@@ -1,0 +1,152 @@
+---
+title: "Analytics API"
+description: "Authenticated facilitator analytics for payments, participants, catalog health, search, and conversion."
+sidebarTitle: "Analytics API"
+keywords:
+  - "analytics"
+  - "x402scan"
+  - "search conversion"
+  - "payment volume"
+---
+
+The analytics API is an operator surface, not a Bazaar surface. It includes
+provenance, payment status, liveness, addresses, internal resource IDs, and
+search telemetry that must never be copied into a public discovery response.
+
+All routes are mounted below `/analytics/v1`. When `FACILITATOR_API_KEYS` is
+configured, they require the facilitator bearer key; the public keyless testnet
+profile intentionally exposes this read-only operator surface. Pubnet startup
+refuses to run without API-key protection. Configure `analytics.enabled`, `analytics.default_page_size`,
+`analytics.max_page_size`, and `analytics.redact_addresses` in the facilitator
+YAML. The `days` window accepts `0`, `1`, `7`, `14`, or `30`; invalid values
+fall back to `30`. `days=0` means all available history.
+
+```bash
+curl -fsS \
+  -H "Authorization: Bearer $FACILITATOR_API_KEY" \
+  'https://facilitator.example.com/analytics/v1/overview?days=30' | jq
+```
+
+## Overview and volume
+
+| Endpoint | Query | Response |
+| --- | --- | --- |
+| `GET /overview` | `days` | Transaction, verification, volume, fee, participant, network, resource, and first/latest activity totals. |
+| `GET /overview/timeseries` | `days`, `bucket=hour\|day` | `{ bucket, series[] }` with totals, amount, unique buyers, and unique sellers per bucket. |
+| `GET /overview/breakdowns` | `days` | `{ networks, schemes, assets, statuses }`, each grouped by key. |
+| `GET /volume/daily` | `days` | Daily rollups by network, scheme, asset, and status. |
+
+Overview fields include `total_transactions`, `successful_transactions`,
+`failed_transactions`, `total_verifications`, `total_amount`,
+`total_sponsored_fee_stroops`, `unique_buyers`, `unique_sellers`,
+`unique_facilitators`, `unique_networks`, `unique_resources`,
+`cataloged_resources`, `active_resources`, `stale_resources`,
+`quarantined_resources`, `origins`, `first_activity`, and `latest_activity`.
+Amounts are atomic-unit strings; fees are stroops.
+
+## Settlement records
+
+`GET /transactions` returns only settled-stage facts and supports:
+
+```text
+limit, offset, payer, payTo, network, scheme, asset, status, resourceId
+```
+
+Each item can include `id`, `occurred_at`, `network`, `scheme`, `asset`,
+`asset_symbol`, `asset_decimals`, `payer`, `pay_to`, `max_amount`, `amount`,
+`fee_stroops`, `transaction_hash`, `status`, `facilitator_id`, `resource_id`,
+`resource_url`, and `error_reason`.
+
+```bash
+curl -fsS \
+  -H "Authorization: Bearer $FACILITATOR_API_KEY" \
+  --get 'https://facilitator.example.com/analytics/v1/transactions' \
+  --data-urlencode 'network=stellar:testnet' \
+  --data-urlencode 'scheme=exact' \
+  --data-urlencode 'limit=50' | jq
+```
+
+`GET /transactions/:hash` resolves the newest payment fact for a Stellar
+transaction hash. It returns `404 {"error":"not_found"}` when no fact is
+recorded for that hash.
+
+The fact table is append-oriented, but a settlement that moves from `unknown`
+to a terminal status updates its idempotency-linked row and corrects the daily
+rollup rather than double-counting the payment.
+
+## Buyers, sellers, and counterparties
+
+The buyer and seller routes have the same shape:
+
+| Endpoint | Meaning |
+| --- | --- |
+| `GET /buyers` | Leaderboard of payer addresses with transaction count, amount, counterparties, networks, facilitators, and latest activity. |
+| `GET /sellers` | Leaderboard of `payTo` addresses with the same fields. |
+| `GET /buyers/:address` | One payer's totals, schemes, networks, first/latest activity, and successful amount. |
+| `GET /sellers/:address` | One seller's totals and activity. |
+| `GET /buyers/:address/transactions` | Settlements where the address is payer. |
+| `GET /sellers/:address/transactions` | Settlements where the address is recipient. |
+| `GET /buyers/:address/counterparties` | Sellers paid by that buyer. |
+| `GET /sellers/:address/counterparties` | Buyers paying that seller. |
+
+List responses include `{ items, pagination }`. Leaderboards also include a
+`concentration` object with total amount and transactions plus top-1, top-5,
+and top-10 amount shares. Address redaction is applied to list responses when
+`analytics.redact_addresses: true`; transaction hashes and resource URLs are
+not redacted by that setting.
+
+## Catalog and resource operations
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /origins` | Origin-level resource count, active count, last seen, settlement count, and successful amount. |
+| `GET /resources` | Most recently created catalog resources with status, ownership, version, verification, provenance, tags, and last-seen timestamps. |
+| `GET /resources/:id` | Full internal resource detail, including version and payment-option history. |
+| `GET /resources/:id/observability` | All-time and 1h/6h/24h/72h/168h/360h/720h call and success counts, unique buyers, amount, and latest activity. |
+| `GET /resources/:id/invocations` | Settled records attributed to one internal resource ID. |
+
+These routes expose internal IDs and provenance. They are suitable for a
+dashboard or operator API only; clients should use
+`/discovery/resources`, `/discovery/search`, and `/discovery/resource` for the
+official Bazaar shape.
+
+## Search health and conversion
+
+`GET /search/status` reports the complete indexing state:
+
+- lexical provider, language, weight, candidate count, and the explicit
+  `postgresql_fts_ts_rank_cd` ranking name;
+- semantic provider, model, revision, dimension, weight, vector support, health,
+  and candidate count;
+- reranking provider, model, top-k, and fallback behavior;
+- RRF constant and minimum relevance score;
+- active model generation and index coverage;
+- worker status and queue depth.
+
+`GET /search/generations` lists every model generation and its status. A
+generation identifies provider, model, revision, dimension, pooling, and
+normalization. Only one generation is active at a time.
+
+`GET /search/conversion?hours=24` reports search-to-payment attribution. The
+response includes impressions, sessions, verified and settled impressions,
+settlements at positions 1/3/5, and a `byMode` breakdown with latency and
+semantic/reranker fallback counts.
+
+The attribution value is explicitly `resource_within_window`: a settlement is
+associated with a resource shown in the same resource's search impression
+within the requested window. Bazaar has no field that carries a search-session
+ID into a seller payment, so this is a directional operational signal, not a
+causal conversion claim.
+
+## Failure and retention behavior
+
+Analytics writes run on the same soft-failure path as cataloging. A database
+failure records an internal error and must not turn an otherwise valid payment
+into a failed payment. Daily totals are corrected when an unresolved settlement
+is later resolved. Apply database backup and retention policy to
+`payment_events`, `payment_daily_totals`, `search_impressions`, and catalog
+tables together so dashboard totals remain explainable.
+
+See [HTTP API](/reference/api), [catalog lifecycle](/concepts/catalog-lifecycle),
+and [storage](/reference/storage) for the public/operator boundary and the
+underlying tables.

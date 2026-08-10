@@ -1,0 +1,80 @@
+---
+title: "Embedded facilitator"
+description: "Run verification and settlement inside the same resource-server process."
+sidebarTitle: "Embedded facilitator"
+keywords:
+  - "createEmbeddedFacilitator"
+  - "self-facilitation"
+  - "embedded x402"
+---
+
+Use the embedded package when a seller wants one process instead of a separate
+facilitator HTTP hop. It uses the same verification, channel leases, fee
+budgets, idempotency records, and unknown-transaction recovery as the standalone
+service.
+
+## Install and configure
+
+The embedded path still requires PostgreSQL. This is deliberate: replay
+protection, sponsor budgets, sequence locks, and settlement recovery must
+survive a process restart and work across replicas.
+
+```bash
+npm install @openx402/stellar-facilitator @x402/express @x402/stellar express
+```
+
+Provide `DATABASE_URL`, `FACILITATOR_CONFIG`, and
+`FACILITATOR_KEY_ENCRYPTION_KEY` as you would for the standalone service.
+
+## Minimal Express server
+
+```ts
+import express from "express";
+import { createEmbeddedFacilitator } from "@openx402/stellar-facilitator";
+import { paymentMiddleware, x402ResourceServer } from "@x402/express";
+import { ExactStellarScheme } from "@x402/stellar/exact/server";
+
+const app = express();
+const embedded = await createEmbeddedFacilitator();
+const resourceServer = new x402ResourceServer(embedded)
+  .register("stellar:testnet", new ExactStellarScheme());
+
+app.use(paymentMiddleware(routes, resourceServer));
+app.get("/health", (_req, res) => res.json({ status: "ok" }));
+app.listen(4788);
+
+process.on("SIGTERM", async () => {
+  await embedded.close();
+  process.exit(0);
+});
+```
+
+The exact exported helper and lifecycle are shown in
+`facilitator/examples/self-facilitating-resource-server`. Keep the example's
+shutdown handling in production so leases and database connections drain
+cleanly.
+
+## Boundary
+
+Embedded facilitation removes the network hop only. The process still:
+
+- re-verifies at settlement;
+- rebuilds the Stellar transaction with a channel account;
+- sponsors the fee through a fee-bump envelope;
+- enforces resource, inclusion, total, concurrency, and sponsor budgets;
+- persists the envelope before submission;
+- polls a known hash after an ambiguous RPC response; and
+- returns the same x402 wire responses as the HTTP facilitator.
+
+The embedded facilitator never becomes the payer or recipient and never holds
+the seller's payment asset.
+
+## When to choose it
+
+Choose embedded facilitation for a single seller or a tightly coupled private
+deployment. Choose the standalone facilitator when several sellers share one
+catalog, when operators need independent scaling, or when the facilitator must
+be upgraded without redeploying seller applications.
+
+See [self-hosting](/operations/self-hosting) for the one-service deployment and
+[security](/operations/security) for key, fee, and recovery invariants.

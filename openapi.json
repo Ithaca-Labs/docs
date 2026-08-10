@@ -1,0 +1,266 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "openx402 Facilitator API",
+    "version": "0.1.0",
+    "description": "HTTP, Bazaar discovery, analytics, and facilitator endpoints for openx402 on Stellar. This production API playground targets the public hosted testnet facilitator. Self-hosted operators can copy this specification and replace the server URL."
+  },
+  "servers": [
+    {
+      "url": "https://facilitator-production-8430.up.railway.app",
+      "description": "Hosted Stellar testnet preview"
+    }
+  ],
+  "tags": [
+    { "name": "Health", "description": "Liveness and readiness checks." },
+    { "name": "Facilitator", "description": "x402 verification, settlement, and supported capabilities." },
+    { "name": "Bazaar discovery", "description": "Public catalog browsing and ranked search." },
+    { "name": "Analytics", "description": "Operator analytics. Fields and access depend on deployment configuration." }
+  ],
+  "paths": {
+    "/health/live": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Check liveness",
+        "operationId": "getHealthLive",
+        "responses": {
+          "200": { "description": "The process is alive.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HealthResponse" } } } }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Check service health",
+        "operationId": "getHealth",
+        "responses": {
+          "200": { "description": "The HTTP service is running.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HealthResponse" } } } }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Check readiness",
+        "operationId": "getHealthReady",
+        "responses": {
+          "200": { "description": "Database and required startup checks are ready.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReadinessResponse" } } } },
+          "503": { "description": "The service is not ready." }
+        }
+      }
+    },
+    "/supported": {
+      "get": {
+        "tags": ["Facilitator"],
+        "summary": "List supported payment schemes",
+        "operationId": "getSupported",
+        "security": [{ "bearerAuth": [] }, {}],
+        "responses": {
+          "200": { "description": "Supported x402 kinds, extensions, and facilitator signers.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SupportedResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/verify": {
+      "post": {
+        "tags": ["Facilitator"],
+        "summary": "Verify a payment payload",
+        "operationId": "verifyPayment",
+        "security": [{ "bearerAuth": [] }, {}],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PaymentEnvelope" } } } },
+        "responses": {
+          "200": { "description": "Verification result. Rejections include a non-null reason.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VerifyResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/settle": {
+      "post": {
+        "tags": ["Facilitator"],
+        "summary": "Settle a verified payment",
+        "operationId": "settlePayment",
+        "security": [{ "bearerAuth": [] }, {}],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PaymentEnvelope" } } } },
+        "responses": {
+          "200": { "description": "Settlement result with transaction hash on success.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SettleResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "description": "Conflicting payment identifier." }
+        }
+      }
+    },
+    "/discovery/resources": {
+      "get": {
+        "tags": ["Bazaar discovery"],
+        "summary": "Browse discovered resources",
+        "operationId": "listDiscoveryResources",
+        "parameters": [
+          { "$ref": "#/components/parameters/Type" },
+          { "$ref": "#/components/parameters/Network" },
+          { "$ref": "#/components/parameters/Scheme" },
+          { "$ref": "#/components/parameters/PayTo" },
+          { "$ref": "#/components/parameters/Asset" },
+          { "$ref": "#/components/parameters/MaxPrice" },
+          { "$ref": "#/components/parameters/Extensions" },
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/Offset" },
+          { "$ref": "#/components/parameters/Cursor" }
+        ],
+        "responses": {
+          "200": { "description": "A Bazaar-compatible paginated resource list.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DiscoveryListResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/discovery/resource": {
+      "get": {
+        "tags": ["Bazaar discovery"],
+        "summary": "Resolve one discovered resource",
+        "operationId": "getDiscoveryResource",
+        "parameters": [
+          { "$ref": "#/components/parameters/TypeRequired" },
+          { "$ref": "#/components/parameters/ResourceUrl" },
+          { "$ref": "#/components/parameters/ToolName" }
+        ],
+        "responses": {
+          "200": { "description": "The current resource and payment options.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SingleDiscoveryResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/discovery/search": {
+      "get": {
+        "tags": ["Bazaar discovery"],
+        "summary": "Search discovered resources",
+        "operationId": "searchDiscoveryResources",
+        "parameters": [
+          { "$ref": "#/components/parameters/Query" },
+          { "$ref": "#/components/parameters/Type" },
+          { "$ref": "#/components/parameters/Network" },
+          { "$ref": "#/components/parameters/Scheme" },
+          { "$ref": "#/components/parameters/PayTo" },
+          { "$ref": "#/components/parameters/Asset" },
+          { "$ref": "#/components/parameters/MaxPrice" },
+          { "$ref": "#/components/parameters/Extensions" },
+          { "$ref": "#/components/parameters/Mode" },
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/Offset" },
+          { "$ref": "#/components/parameters/Cursor" }
+        ],
+        "responses": {
+          "200": { "description": "Ranked resources with partial-result state and a cursor.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SearchResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/analytics/v1/overview": {
+      "get": {
+        "tags": ["Analytics"],
+        "summary": "Get payment overview",
+        "operationId": "getAnalyticsOverview",
+        "security": [{ "bearerAuth": [] }, {}],
+        "parameters": [{ "$ref": "#/components/parameters/Days" }],
+        "responses": {
+          "200": { "description": "Aggregated payment and catalog totals.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FreeformObject" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/analytics/v1/transactions": {
+      "get": {
+        "tags": ["Analytics"],
+        "summary": "List settlement records",
+        "operationId": "listAnalyticsTransactions",
+        "security": [{ "bearerAuth": [] }, {}],
+        "parameters": [
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/Offset" },
+          { "$ref": "#/components/parameters/Network" },
+          { "$ref": "#/components/parameters/Scheme" },
+          { "$ref": "#/components/parameters/Asset" },
+          { "$ref": "#/components/parameters/Status" }
+        ],
+        "responses": {
+          "200": { "description": "Operator settlement records.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FreeformObject" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/analytics/v1/search/status": {
+      "get": {
+        "tags": ["Analytics"],
+        "summary": "Inspect search health",
+        "operationId": "getSearchStatus",
+        "security": [{ "bearerAuth": [] }, {}],
+        "responses": {
+          "200": { "description": "Lexical, semantic, reranker, generation, and queue status.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FreeformObject" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/analytics/v1/resources": {
+      "get": {
+        "tags": ["Analytics"],
+        "summary": "List internal catalog resources",
+        "operationId": "listAnalyticsResources",
+        "security": [{ "bearerAuth": [] }, {}],
+        "parameters": [{ "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "Operator resource records with status and provenance.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FreeformObject" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "API key",
+        "description": "Optional on keyless testnet profiles. Required when the operator configures FACILITATOR_API_KEYS and on pubnet."
+      }
+    },
+    "parameters": {
+      "Type": { "name": "type", "in": "query", "schema": { "type": "string", "enum": ["http", "mcp"] } },
+      "TypeRequired": { "name": "type", "in": "query", "required": true, "schema": { "type": "string", "enum": ["http", "mcp"] } },
+      "Network": { "name": "network", "in": "query", "schema": { "type": "string", "example": "stellar:testnet" } },
+      "Scheme": { "name": "scheme", "in": "query", "schema": { "type": "string", "example": "exact" } },
+      "PayTo": { "name": "payTo", "in": "query", "schema": { "type": "string", "example": "G..." } },
+      "Asset": { "name": "asset", "in": "query", "schema": { "type": "string", "example": "CDLZFC3..." } },
+      "MaxPrice": { "name": "maxPrice", "in": "query", "description": "Atomic-unit maximum. Provide asset too so the unit is unambiguous.", "schema": { "type": "string", "pattern": "^(0|[1-9][0-9]{0,38})$" } },
+      "Extensions": { "name": "extensions", "in": "query", "schema": { "type": "string", "example": "bazaar" } },
+      "Query": { "name": "query", "in": "query", "required": true, "schema": { "type": "string", "maxLength": 512, "example": "weather API in Mumbai" } },
+      "Mode": { "name": "mode", "in": "query", "schema": { "type": "string", "enum": ["lexical", "semantic", "hybrid"], "default": "hybrid" } },
+      "Limit": { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 20 } },
+      "Offset": { "name": "offset", "in": "query", "schema": { "type": "integer", "minimum": 0, "default": 0 } },
+      "Cursor": { "name": "cursor", "in": "query", "schema": { "type": "string" } },
+      "ResourceUrl": { "name": "url", "in": "query", "required": true, "schema": { "type": "string", "format": "uri", "example": "https://api.example.com/weather" } },
+      "ToolName": { "name": "toolName", "in": "query", "schema": { "type": "string", "example": "get_weather" } },
+      "Days": { "name": "days", "in": "query", "schema": { "type": "integer", "enum": [0, 1, 7, 14, 30], "default": 30 } },
+      "Status": { "name": "status", "in": "query", "schema": { "type": "string", "example": "success" } }
+    },
+    "responses": {
+      "BadRequest": { "description": "Invalid request or filter.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+      "Unauthorized": { "description": "A configured bearer key was missing or invalid.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+      "NotFound": { "description": "No matching catalog resource was found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+    },
+    "schemas": {
+      "FreeformObject": { "type": "object", "additionalProperties": true },
+      "HealthResponse": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string", "example": "ok" } } },
+      "ReadinessResponse": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string", "example": "ready" }, "search": { "$ref": "#/components/schemas/FreeformObject" } } },
+      "SupportedResponse": { "type": "object", "required": ["kinds", "extensions", "signers"], "properties": { "kinds": { "type": "array", "items": { "$ref": "#/components/schemas/FreeformObject" } }, "extensions": { "type": "array", "items": { "type": "string" } }, "signers": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } } } },
+      "PaymentEnvelope": { "type": "object", "required": ["x402Version", "paymentPayload", "paymentRequirements"], "properties": { "x402Version": { "type": "integer", "example": 2 }, "paymentPayload": { "$ref": "#/components/schemas/FreeformObject" }, "paymentRequirements": { "$ref": "#/components/schemas/FreeformObject" } } },
+      "VerifyResponse": { "type": "object", "required": ["isValid"], "properties": { "isValid": { "type": "boolean" }, "payer": { "type": "string" }, "invalidReason": { "type": ["string", "null"] } }, "additionalProperties": true },
+      "SettleResponse": { "type": "object", "required": ["success", "transaction", "network"], "properties": { "success": { "type": "boolean" }, "transaction": { "type": "string" }, "network": { "type": "string" }, "payer": { "type": "string" }, "amount": { "type": "string" }, "errorReason": { "type": ["string", "null"] } }, "additionalProperties": true },
+      "PaymentAccept": { "type": "object", "additionalProperties": true, "properties": { "scheme": { "type": "string" }, "network": { "type": "string" }, "asset": { "type": "string" }, "amount": { "type": "string" }, "payTo": { "type": "string" } } },
+      "DiscoveryResource": { "type": "object", "required": ["resource", "type", "x402Version", "accepts"], "properties": { "resource": { "type": "string", "format": "uri" }, "type": { "type": "string", "enum": ["http", "mcp"] }, "x402Version": { "type": "integer", "example": 2 }, "accepts": { "type": "array", "items": { "$ref": "#/components/schemas/PaymentAccept" } }, "lastUpdated": { "type": "string", "format": "date-time" }, "description": { "type": "string" }, "serviceName": { "type": "string" }, "tags": { "type": "array", "items": { "type": "string" } }, "extensions": { "type": "object", "additionalProperties": true } }, "additionalProperties": true },
+      "DiscoveryListResponse": { "type": "object", "required": ["x402Version", "items", "pagination", "partialResults"], "properties": { "x402Version": { "type": "integer", "example": 2 }, "items": { "type": "array", "items": { "$ref": "#/components/schemas/DiscoveryResource" } }, "pagination": { "$ref": "#/components/schemas/FreeformObject" }, "partialResults": { "type": "boolean" } } },
+      "SingleDiscoveryResponse": { "type": "object", "required": ["x402Version", "resource"], "properties": { "x402Version": { "type": "integer", "example": 2 }, "resource": { "$ref": "#/components/schemas/DiscoveryResource" } } },
+      "SearchResponse": { "type": "object", "required": ["x402Version", "resources", "pagination", "partialResults"], "properties": { "x402Version": { "type": "integer", "example": 2 }, "resources": { "type": "array", "items": { "$ref": "#/components/schemas/DiscoveryResource" } }, "partialResults": { "type": "boolean" }, "pagination": { "$ref": "#/components/schemas/FreeformObject" } } },
+      "ErrorResponse": { "type": "object", "required": ["error"], "properties": { "error": { "type": "string" }, "details": { "type": "array", "items": { "type": "string" } } }, "additionalProperties": true }
+    }
+  }
+}

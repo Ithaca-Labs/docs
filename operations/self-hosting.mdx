@@ -2,7 +2,6 @@
 title: "Self-host openx402"
 description: "Deploy and operate the facilitator, PostgreSQL, search, and optional MCP server."
 sidebarTitle: "Self-hosting"
-icon: "server-cog"
 keywords:
   - "self-host openx402"
   - "Docker facilitator"
@@ -122,6 +121,20 @@ analytics database is required.
 The facilitator loads the YAML selected by `FACILITATOR_CONFIG`, defaulting to
 `config/self-hosted.yaml` inside its container. Secrets are read through the
 environment variable names referenced by that YAML.
+
+Choose a profile before adding provider keys:
+
+| Profile | Embeddings | Reranking | Use it when |
+| --- | --- | --- | --- |
+| Testnet default | Disabled or lexical fallback | Disabled | You need a zero-key local smoke test. |
+| Hosted Railway | Remote OpenAI-compatible provider | Disabled | You want managed search and only supply `OPENROUTER_API_KEY`. |
+| Lightweight self-host | Disabled | Disabled | You want the smallest deployment and deterministic PostgreSQL FTS. |
+| Local semantic | Local optional runtime | Disabled by default | You can package model weights and accept the image/storage cost. |
+
+The profile changes performance and search quality only. It cannot disable
+signature validation, enforcing simulation, fee gates, idempotency, channel
+fencing, or the pubnet startup gates. See the complete [configuration
+reference](/reference/configuration) for every supported knob and its default.
 
 Important environment variables in the root `.env` file:
 
@@ -256,6 +269,8 @@ TTLs.
 ## Next steps
 
 - [Architecture](/concepts/architecture)
+- [Upto deployment boundary](/guides/upto)
+- [Configuration reference](/reference/configuration)
 - [Security](/operations/security)
 - [Troubleshooting](/operations/troubleshooting)
 - [Facilitator configuration](https://github.com/Ithaca-Labs/openx402/blob/main/facilitator/docs/CONFIGURATION.md)

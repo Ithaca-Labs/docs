@@ -1,0 +1,94 @@
+---
+title: "Upto payments"
+description: "Understand the proposed Stellar upto scheme, Soroban contract, callbacks, and release boundary."
+sidebarTitle: "Upto"
+keywords:
+  - "upto Stellar"
+  - "Soroban settlement contract"
+  - "metered payments"
+  - "settlement hook"
+---
+
+`upto` lets a buyer authorize a maximum while the facilitator settles the
+actual amount. It is intended for metered APIs. Stellar's implementation ships
+a Soroban settlement contract because a bare SEP-41 allowance cannot provide
+the required recipient binding and terminal single-settlement behavior.
+
+<Warning>
+  The Stellar `upto` scheme is implemented in this repository and has testnet
+  evidence, but it is not yet a released upstream `@x402/stellar` scheme. Do
+  not describe it as canonical upstream support until the x402 TSC merge lands.
+</Warning>
+
+## Atomic settlement
+
+The contract atomically:
+
+1. consumes an approval for exactly `max_amount`;
+2. pulls the maximum from the payer;
+3. transfers `actual` to `payTo`;
+4. refunds `max_amount - actual`; and
+5. verifies terminal allowance and balance/event invariants.
+
+`actual` may be zero, partial, or equal to the maximum. Zero settlement still
+submits a contract transaction so the host nonce is consumed and the
+authorization cannot later be reused for a non-zero amount.
+
+## Binding and validity
+
+The signed authorization binds payer, recipient, token, maximum, network,
+settlement contract, facilitator, settlement identifier, optional hook, and the
+ledger validity window. Stellar validity uses ledgers rather than wall-clock
+timestamps. The allowance expiration must cover the contract deadline, and the
+contract deadline must cover settlement execution; the signature expiration is
+derived from the seller's maximum timeout.
+
+## Client usage
+
+The temporary reusable package has the upstream-shaped interfaces:
+
+```ts
+import { x402Client } from "@x402/core/client";
+import { HTTPFacilitatorClient } from "@x402/core/http";
+import { createEd25519Signer } from "@x402/stellar";
+import { UptoStellarScheme } from "@openx402/stellar-upto/client";
+
+const facilitator = new HTTPFacilitatorClient({
+  url: process.env.FACILITATOR_URL!,
+});
+const client = new x402Client().register(
+  "stellar:testnet",
+  new UptoStellarScheme(
+    createEd25519Signer(process.env.BUYER_SECRET_KEY!, "stellar:testnet"),
+    { facilitatorClient: facilitator },
+  ),
+);
+```
+
+The wire payload remains `{ transaction }`. No new x402 JSON field is added.
+
+## Hooks and smart-account budgets
+
+The optional versioned settlement hook receives a structured settlement notice.
+It fires for zero settlement too. A hook failure reverts the payer's own
+transaction; the payer chose the hook and accepts that availability risk. The
+facilitator's enforcing simulation includes hook execution in the fee gate, so
+an expensive hook is rejected before sponsorship. The contract rechecks balance
+and allowance invariants after the callback. The settlement contract and token
+contract cannot be selected as hooks.
+
+For an OpenZeppelin smart account, use two context rules: one for the outer
+settlement call and one for the nested SEP-41 `approve` call. A reconciling
+spending policy can reserve `max_amount` during authorization and release the
+unused amount when the contract reports `actual`. The process budget, signed
+maximum, and on-chain policy remain independent ceilings.
+
+## Current evidence and gaps
+
+Testnet evidence covers zero, partial, maximum, replay, concurrency, custom
+accounts, hooks, and real OpenZeppelin policy authorization. The remaining
+release gates are SDF/TSC review, upstream reusable client merge, audited
+contract deployment, issued-USDC coverage, and pubnet transaction evidence.
+
+See [upto conformance](/reference/upto-conformance) for hashes and the precise
+release boundary.

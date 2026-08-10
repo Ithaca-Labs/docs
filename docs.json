@@ -42,10 +42,12 @@
     "type": "warning"
   },
   "navigation": {
-    "groups": [
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
       {
         "group": "Getting started",
-        "icon": "rocket",
         "pages": [
           "index",
           "quickstart"
@@ -53,23 +55,42 @@
       },
       {
         "group": "Build",
-        "icon": "code-2",
         "pages": [
           "guides/http-seller",
+          "guides/seller-sdk",
           "guides/buyer-client",
+          "guides/embedded-facilitator",
           "guides/mcp"
         ]
       },
       {
         "group": "Discover",
-        "icon": "search",
         "pages": [
-          "concepts/bazaar"
+          "concepts/bazaar",
+          "concepts/catalog-lifecycle",
+          "concepts/search",
+          "concepts/evaluation",
+          "concepts/evaluation-workflow"
+        ]
+      },
+      {
+        "group": "Protocol",
+        "pages": [
+          "concepts/architecture",
+          "concepts/exact"
+        ]
+      },
+      {
+        "group": "Upto (proposed)",
+        "pages": [
+          "guides/upto",
+          "concepts/upto",
+          "concepts/smart-accounts",
+          "reference/upto-conformance"
         ]
       },
       {
         "group": "Operate",
-        "icon": "server-cog",
         "pages": [
           "operations/self-hosting",
           "operations/security",
@@ -77,10 +98,41 @@
         ]
       },
       {
-        "group": "Understand",
-        "icon": "network",
+        "group": "Reference",
         "pages": [
-          "concepts/architecture"
+          "reference/api",
+          "reference/analytics",
+          "reference/configuration",
+          "reference/mcp-tools",
+          "reference/sdk-surface",
+          "reference/storage",
+          "reference/cli"
+        ]
+      }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "openapi": "openapi.json"
+      },
+      {
+        "tab": "SDK",
+        "groups": [
+          {
+            "group": "Integrate",
+            "pages": [
+              "guides/seller-sdk",
+              "guides/buyer-client",
+              "guides/mcp"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/sdk-surface",
+              "reference/mcp-tools"
+            ]
+          }
         ]
       }
     ],
@@ -114,6 +166,16 @@
   },
   "search": {
     "prompt": "Search openx402 docs..."
+  },
+  "api": {
+    "playground": {
+      "display": "interactive",
+      "proxy": true
+    },
+    "examples": {
+      "languages": ["curl", "javascript", "python"],
+      "defaults": "required"
+    }
   },
   "contextual": {
     "options": [
@@ -192,63 +254,6 @@
   "footer": {
     "socials": {
       "github": "https://github.com/Ithaca-Labs/openx402"
-    },
-    "links": [
-      {
-        "header": "Build",
-        "items": [
-          {
-            "label": "Quickstart",
-            "href": "/quickstart"
-          },
-          {
-            "label": "HTTP seller",
-            "href": "/guides/http-seller"
-          },
-          {
-            "label": "Buyer client",
-            "href": "/guides/buyer-client"
-          },
-          {
-            "label": "MCP",
-            "href": "/guides/mcp"
-          }
-        ]
-      },
-      {
-        "header": "Operate",
-        "items": [
-          {
-            "label": "Self-hosting",
-            "href": "/operations/self-hosting"
-          },
-          {
-            "label": "Security",
-            "href": "/operations/security"
-          },
-          {
-            "label": "Troubleshooting",
-            "href": "/operations/troubleshooting"
-          }
-        ]
-      },
-      {
-        "header": "Resources",
-        "items": [
-          {
-            "label": "Source code",
-            "href": "https://github.com/Ithaca-Labs/openx402"
-          },
-          {
-            "label": "Bazaar SDK",
-            "href": "https://www.npmjs.com/package/@openx402/bazaar-sdk"
-          },
-          {
-            "label": "Deploy on Railway",
-            "href": "https://railway.com/deploy/uKrE3J"
-          }
-        ]
-      }
-    ]
+    }
   }
 }

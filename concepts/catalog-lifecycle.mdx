@@ -1,0 +1,139 @@
+---
+title: "Catalog lifecycle"
+description: "How paid observations become trusted, versioned, searchable Bazaar resources and how stale listings leave discovery."
+sidebarTitle: "Catalog lifecycle"
+keywords:
+  - "automatic cataloging"
+  - "EXTENSION-RESPONSES"
+  - "catalog trust"
+  - "stale resources"
+---
+
+Cataloging is automatic. A seller does not register a listing after a payment;
+the facilitator extracts the Bazaar declaration from the `PaymentPayload` it
+already receives. Seller metadata remains the source of truth. The facilitator
+does not ask an LLM to invent descriptions, parameters, prices, or capabilities.
+
+## Payment-to-catalog flow
+
+```text
+PaymentPayload
+  -> parse and validate x402 terms
+  -> decide verify/settle outcome
+  -> extract Bazaar declaration
+  -> normalize URL and metadata
+  -> validate official extension schema
+  -> enforce trust and ownership rules
+  -> append version and payment options
+  -> write deterministic search document
+  -> enqueue embedding job
+  -> report result in EXTENSION-RESPONSES
+```
+
+Cataloging and analytics are soft-failure side effects. Invalid metadata never
+turns a valid payment into a payment rejection, and a catalog database failure
+must not change the payment response.
+
+The configured `index_on` boundary is either `verified` or `settled`. The
+checked-in hosted profile uses `verified`, so a valid declared payment can be
+indexed before final settlement; operators that require only completed payments
+can choose `settled`.
+
+## Validation and trust boundary
+
+The facilitator delegates Bazaar validation to the official x402 extension
+builders and validators, including JSON Schema validation. It then applies local
+bounds and security checks:
+
+- metadata byte, depth, description, service-name, tag, icon, schema, example,
+  and route-template limits;
+- Unicode normalization and control/bidi stripping;
+- URL normalization and HTTPS-origin policy;
+- percent-decoding before route-template traversal checks;
+- valid HTTP method/path or MCP transport/tool identity;
+- no unsafe route traversal or malformed echoed resource block;
+- no silent replacement of an existing resource's owner `payTo`.
+
+Invalid declarations are recorded as rejected observations with a stable public
+reason and precise internal reason. The response uses the official
+`EXTENSION-RESPONSES` header; no private status field is added to Bazaar JSON.
+
+`payment_observed` means this facilitator itself verified or settled a real
+payment whose declared asset, network, amount, and recipient matched. It does
+not prove that the seller controls the origin, that the description is truthful,
+or that the endpoint is high quality. The dashboard may show provenance and
+status; public Bazaar responses do not.
+
+## Identity and ownership
+
+HTTP resources are keyed by normalized origin, route template or path, and
+uppercase method. MCP resources are keyed by the tuple:
+
+```text
+(resource.url, input.toolName)
+```
+
+Two MCP tools at one endpoint therefore remain separate catalog entries. A
+resource is owned by the first observed `payTo`; a later declaration with a
+different recipient cannot silently take over that identity. A changed price,
+asset, timeout, schema, or description creates a new append-only version and
+payment-option history.
+
+## Versioning and cursor snapshots
+
+`catalog_resources` is the stable identity row. Each declaration is stored in
+`catalog_resource_versions`, and each accepted option is stored in
+`catalog_payment_options`. The rows are append-only for seller declarations;
+historical records keep the terms that were actually paid.
+
+Every visible version receives a monotonic catalog watermark under a PostgreSQL
+row lock. A discovery cursor contains:
+
+- the snapshot watermark;
+- the result offset;
+- a fingerprint of query and filters;
+- an expiry timestamp; and
+- a search-session ID for ranked result attribution.
+
+The cursor is HMAC-signed. Reusing it with different filters, a modified body,
+or an expired timestamp returns `invalid_cursor`. Pages therefore remain stable
+while new resources are written by another replica.
+
+## Liveness and staleness
+
+The catalog records `first_seen`, `last_seen`, `last_seen_paid`, active/stale/
+quarantined status, and observation outcomes. A resource that stops being seen
+is demoted after `stale_after_hours` and is excluded by the default discovery
+profile. Operators can explicitly include stale entries for investigation.
+
+Nothing is silently deleted merely because an endpoint stopped responding:
+retention and tombstoning are operational decisions, while the audit trail
+preserves why a listing was rejected, superseded, quarantined, or stale.
+
+## Search handoff
+
+Every active version gets a deterministic canonical search document compiled from
+seller fields. The lexical document is written synchronously; embedding work is
+queued in PostgreSQL and is never awaited by `/verify` or `/settle`. A worker
+claims jobs with `FOR UPDATE SKIP LOCKED`, leases and fencing tokens. Failed
+jobs back off and eventually become dead-lettered, where `npm run index -- revive`
+can requeue them.
+
+This separation keeps payment latency independent from model availability. With
+no pgvector or embedding provider, the same catalog remains browseable and
+searchable through PostgreSQL full-text search.
+
+## Inspecting outcomes
+
+Use the public discovery routes for the official wire shape:
+
+```bash
+curl -fsS 'https://facilitator.example.com/discovery/resources?limit=20' | jq
+curl -fsS --get 'https://facilitator.example.com/discovery/search' \
+  --data-urlencode 'query=weather' | jq
+```
+
+Use authenticated analytics to inspect rejected observations, versions,
+verification, payment options, stale state, search generations, and resource
+liveness. See [Analytics API](/reference/analytics) and
+[storage](/reference/storage).

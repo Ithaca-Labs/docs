@@ -1,0 +1,75 @@
+---
+title: "Smart accounts and spending policies"
+description: "Compose Stellar x402 payments with OpenZeppelin C-account context rules and reconciling policies."
+sidebarTitle: "Smart accounts"
+keywords:
+  - "Soroban __check_auth"
+  - "OpenZeppelin smart account"
+  - "context rules"
+  - "spending policy"
+---
+
+The facilitator accepts classic Ed25519 accounts and custom Soroban
+`__check_auth` accounts. It does not implement or own the account policy. It
+constructs and enforces the signed invocation through Stellar simulation.
+
+## Two authorization contexts
+
+An OpenZeppelin smart account needs both context rules for a settlement that
+contains a nested token approval:
+
+1. `CallContract(settlement_contract)` for the outer settlement invocation.
+2. `CallContract(token_contract)` for the nested SEP-41 `approve` call.
+
+Pass both IDs in `context_rule_ids = [settlement_rule, token_rule]`. A single
+outer-call rule does not implicitly authorize the nested token call.
+
+Record-mode simulation does not execute `__check_auth`; enforcing simulation
+does. The facilitator therefore uses record simulation for resource estimates,
+then the buyer signs, then enforcing simulation validates the signed tree before
+submission.
+
+## Reconcile a metered budget
+
+An `upto` policy can conservatively reserve the maximum and reconcile the
+unused amount after settlement:
+
+```text
+enforce(payment_id, max_amount)
+  reserve max_amount
+
+settlement contract settles actual
+  call policy.release(payment_id, max_amount - actual)
+```
+
+The policy authenticates the settlement contract as its trusted caller. The
+account's context rule still restricts the agent key to that settlement call.
+This keeps the agent inside three independent limits:
+
+- local MCP runtime budget;
+- signed x402 maximum;
+- on-chain smart-account policy.
+
+The reference reconciling policy is optional and off the default payment path.
+The settlement hook ABI is the protocol-facing boundary; policy implementations
+remain replaceable.
+
+## MCP signer boundary
+
+`mcp-server` asks a configured `SignerProvider` for an address and
+`signAuthEntry`. It never inspects or synthesizes context rules. A smart-account
+aware signer must attach the two context-rule IDs and any required signer
+threshold or weighted authorization.
+
+Supported signer modes are:
+
+- `env-secret` for local stdio testnet only;
+- `external` for a remote signer service over authenticated HTTPS; and
+- `encrypted-key` for a local encrypted keystore.
+
+Remote transports require bearer authentication whenever a signer is enabled.
+Pubnet paid calls also require explicit network enablement and a durable
+PostgreSQL budget store.
+
+See [MCP](/guides/mcp), [upto](/concepts/upto), and
+[security](/operations/security) for operational constraints.

@@ -1,0 +1,49 @@
+---
+title: "Upto conformance"
+description: "Testnet evidence, contract checks, and upstream release status for Stellar upto."
+sidebarTitle: "Upto conformance"
+keywords:
+  - "upto testnet hash"
+  - "conformance"
+  - "SDF review"
+---
+
+This page records what has actually been exercised. It does not turn a private
+implementation into an upstream standard.
+
+## Testnet evidence
+
+| Case | Result | Transaction |
+| --- | --- | --- |
+| Partial (`max=10000`, `actual=3000`) | Success | `eeaee51c8e1368a95d019174b87fc56b7778f88898eb8404fdea484d91e9fd63` |
+| Zero (`max=10000`, `actual=0`) | Success | `315802ef4e2e9e044ca890f955a3a832d7490d9ef342dd3aeebbe1e22dd98cf2` |
+
+The live flow creates the payload through an otherwise unmodified canonical
+`x402Client`, sends it through `HTTPFacilitatorClient`, and settles through the
+facilitator. The client package is currently `@openx402/stellar-upto`; it is
+shaped for contribution to `@x402/stellar` and is not yet an upstream release.
+
+## Contract guarantees tested
+
+- payer, recipient, token, maximum, network, contract, facilitator, settlement
+  identifier, and hook binding;
+- zero, partial, maximum, above-maximum, negative, and `i128::MAX` amounts;
+- approval, pull, pay, refund, and token-call rollback;
+- replay with the same and changed actual amount;
+- concurrent facilitators and channel-account sequence contention;
+- classic accounts and custom `__check_auth` accounts;
+- two OpenZeppelin context rules for outer settlement and nested approval;
+- optional settlement hook failure, reentry, balance mutation, and CPU cost;
+- reconciling spending-policy reserve and release behavior.
+
+## Not yet conformance evidence
+
+- merged upstream `scheme_upto_stellar.md` and reusable client;
+- official x402 E2E on both networks;
+- pubnet exact or `upto` transaction hashes;
+- external audit and audited pubnet contract deployment;
+- full issued-USDC and unusual SEP-41 compatibility matrix.
+
+Treat the [upto specification source](https://github.com/Ithaca-Labs/openx402/blob/main/x402-stellar-upto/spec/scheme_upto_stellar.md)
+as the normative design draft and the repository evidence as the measured
+boundary.

@@ -1,0 +1,225 @@
+---
+title: "HTTP API reference"
+description: "Wire-compatible facilitator, discovery, health, and operator analytics endpoints."
+sidebarTitle: "HTTP API"
+keywords:
+  - "verify"
+  - "settle"
+  - "supported"
+  - "Bazaar API"
+  - "analytics"
+---
+
+This page documents the HTTP surface implemented by the facilitator. Payment
+routes use the x402 v2 request and response types. Discovery routes keep the
+official Bazaar response shape. Operator analytics add internal fields and are
+authenticated separately from public discovery.
+
+For generated endpoint pages with cURL, JavaScript, and Python examples plus
+the interactive request builder, use the top-level **API Reference** tab or
+open [Check liveness](/api-reference/health/check-liveness) directly. It is
+generated from the checked-in `openapi.json` and points at the hosted testnet
+preview or a local self-hosted facilitator. The generated operation pages are
+where Mintlify displays the **Try it** button; this overview page is
+intentionally documentation-only.
+
+## Authentication
+
+The testnet preview is keyless. Production operators configure comma-separated
+bearer keys through `FACILITATOR_API_KEYS` (or the variable named by
+`api_keys_env`). Send the key on `/supported`, `/verify`, `/settle`, and
+`/analytics/v1/*`:
+
+```bash
+curl -H "Authorization: Bearer $FACILITATOR_API_KEY" \
+  https://facilitator.example.com/supported
+```
+
+`/health/*` and `/discovery/*` are public read-only routes. Pubnet startup
+fails closed unless authentication and sponsor configuration are present.
+
+## Health
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/health/live` | Process liveness. |
+| `GET` | `/health` | Compatibility liveness alias. |
+| `GET` | `/health/ready` | PostgreSQL readiness plus search-provider status. |
+
+```bash
+curl -fsS https://facilitator.example.com/health/ready | jq
+```
+
+Search degradation does not make the payment service unready. The response
+reports `search.lexical`, `search.semantic`, `search.vectorSupport`, the active
+model generation, and the provider's bounded error detail when available.
+
+## Protocol endpoints
+
+### `GET /supported`
+
+Returns the standard facilitator capabilities response. Stellar entries include
+the supported CAIP-2 network, scheme, signer address, and the Stellar extension:
+
+```json
+{
+  "kinds": [
+    {
+      "x402Version": 2,
+      "scheme": "exact",
+      "network": "stellar:testnet",
+      "extra": { "areFeesSponsored": true }
+    }
+  ]
+}
+```
+
+The exact list depends on enabled networks, configured assets, audited `upto`
+contract addresses, and the current operator profile. Do not hard-code a
+facilitator signer address in a client; read `/supported` or the seller's
+`PaymentRequired` response.
+
+### `POST /verify`
+
+Accepts the canonical x402 envelope. The Stellar payload is passed verbatim:
+
+```json
+{
+  "x402Version": 2,
+  "paymentPayload": {
+    "x402Version": 2,
+    "accepted": {
+      "scheme": "exact",
+      "network": "stellar:testnet",
+      "asset": "ASSET_CONTRACT",
+      "amount": "1000",
+      "payTo": "G...",
+      "maxTimeoutSeconds": 60,
+      "extra": { "areFeesSponsored": true }
+    },
+    "payload": { "transaction": "AAAA..." }
+  },
+  "paymentRequirements": {
+    "scheme": "exact",
+    "network": "stellar:testnet",
+    "asset": "ASSET_CONTRACT",
+    "amount": "1000",
+    "payTo": "G...",
+    "maxTimeoutSeconds": 60,
+    "extra": { "areFeesSponsored": true }
+  }
+}
+```
+
+Success returns `{ "isValid": true, "payer": "..." }`. Rejection returns
+`{ "isValid": false, "invalidReason": "..." }` with a non-null reason. The
+facilitator validates the signed authorization, payment terms, expiration,
+asset allowlist, exact event or `upto` event sequence, and enforcing simulation
+before accepting a payment.
+
+If Bazaar metadata is present, cataloging is a post-decision side effect. Its
+result is encoded in the standard `EXTENSION-RESPONSES` header and never turns a
+valid payment into an invalid one.
+
+### `POST /settle`
+
+Uses the same envelope as `/verify`. Settlement always re-verifies, rebuilds
+the transaction with a leased channel account, signs the sponsor fee bump,
+submits, and polls finality. The response is the standard settlement shape:
+
+```json
+{
+  "success": true,
+  "payer": "G...",
+  "transaction": "TX_HASH",
+  "network": "stellar:testnet"
+}
+```
+
+Failures still return a non-null `errorReason`. A `503` with
+`settle_stellar_temporarily_unavailable` means the caller may retry the same
+payment identifier after the `Retry-After` delay. An unknown submitted hash is
+persisted and polled; the facilitator never creates a second authorization for
+an unknown result.
+
+## Bazaar discovery
+
+### `GET /discovery/resources`
+
+Browse catalog entries using the official `items` response shape:
+
+```bash
+curl -fsS \
+  'https://facilitator.example.com/discovery/resources?type=http&network=stellar%3Atestnet&limit=20' \
+  | jq
+```
+
+Supported specification filters are `type`, `network`, `scheme`, `payTo`, and
+`extensions`, plus `limit`, `offset`, and `cursor`. This implementation also
+exposes `asset` and `maxPrice` as documented upstream proposals. `maxPrice`
+requires `asset` and is expressed in that asset's atomic units.
+
+### `GET /discovery/search`
+
+Search uses the official `resources`, `partialResults`, and `pagination` shape:
+
+```bash
+curl -fsS --get 'https://facilitator.example.com/discovery/search' \
+  --data-urlencode 'query=weather for Mumbai' \
+  --data-urlencode 'network=stellar:testnet' \
+  --data-urlencode 'limit=10' | jq
+```
+
+Search applies structured filters, PostgreSQL full-text retrieval, optional
+pgvector retrieval, reciprocal-rank fusion, and optional reranking. A signed
+cursor fixes the catalog snapshot and filter fingerprint. The response may set
+`partialResults: true` when a provider is unavailable or more pages remain.
+
+### `GET /discovery/resource`
+
+Resolve one current resource by identity. HTTP resources use `type=http&url=...`;
+MCP resources also require `toolName`:
+
+```bash
+curl -fsS --get 'https://facilitator.example.com/discovery/resource' \
+  --data-urlencode 'type=mcp' \
+  --data-urlencode 'url=https://seller.example.com/mcp' \
+  --data-urlencode 'toolName=sentiment_analysis' | jq
+```
+
+The standalone MCP server uses this endpoint to detect stale versions before a
+paid call.
+
+## Operator analytics
+
+All `/analytics/v1/*` routes require bearer authentication. They are not Bazaar
+wire responses and must not be exposed as public catalog data.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `/analytics/v1/overview` | Volume, settlement, seller, and buyer totals. |
+| `/analytics/v1/overview/timeseries` | Hourly or daily series. |
+| `/analytics/v1/overview/breakdowns` | Network, scheme, asset, and status breakdowns. |
+| `/analytics/v1/volume/daily` | Daily volume totals. |
+| `/analytics/v1/transactions` | Filterable settlement records and pagination. |
+| `/analytics/v1/transactions/:hash` | One settlement by transaction hash. |
+| `/analytics/v1/buyers` and `/sellers` | Participant lists and concentration. |
+| `/analytics/v1/resources` | Recent catalog resources. |
+| `/analytics/v1/resources/:id` | Resource detail and versions. |
+| `/analytics/v1/resources/:id/observability` | Liveness and payment observations. |
+| `/analytics/v1/search/status` | Provider, generation, queue, and vector health. |
+| `/analytics/v1/search/generations` | Embedding generations and migration state. |
+| `/analytics/v1/search/conversion` | Search-to-payment conversion attribution. |
+
+Use `/analytics/v1/search/status` to diagnose semantic indexing without
+changing payment behavior. See [evaluation](/concepts/evaluation) for the
+reproducible benchmark rather than treating live analytics as a relevance label.
+
+## Error handling
+
+Clients should branch on the stable reason fields, not prose. Common protocol
+reasons include `invalid_request`, `unsupported_network`,
+`invalid_stellar_asset_not_allowed`, `invalid_stellar_auth_expired`,
+`settle_stellar_temporarily_unavailable`, and
+`payment_identifier_conflict`. The facilitator preserves a non-null reason on
+every rejection.

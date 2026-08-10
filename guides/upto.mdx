@@ -1,0 +1,276 @@
+---
+title: "Build with Stellar upto"
+description: "Authorize a maximum, settle actual usage, and reconcile the remainder through the proposed Soroban-backed Stellar scheme."
+sidebarTitle: "Build with upto"
+keywords:
+  - "UptoStellarScheme"
+  - "metered API"
+  - "Soroban settlement contract"
+  - "settlement hook"
+---
+
+<Warning>
+  Stellar `upto` is a proposed implementation in this repository. The
+  Soroban contract and temporary client have testnet evidence, but the scheme
+  is not yet canonical `@x402/stellar`, has no published pubnet deployment,
+  and is not an audited production payment path.
+</Warning>
+
+Use `upto` when a seller needs to authorize a cap before it knows the final
+metered amount. The contract settles `actual` atomically and refunds the
+remainder. The buyer does not sign a new payment for every usage increment.
+
+## What ships in this repository
+
+| Component | Location | Boundary |
+| --- | --- | --- |
+| Network spec | `x402-stellar-upto/spec/scheme_upto_stellar.md` | Proposed Stellar-specific normative behavior. |
+| Client/server package | `packages/stellar-upto` | Temporary upstream-shaped `x402Client` and resource-server integrations. |
+| Settlement contract | `x402-stellar-upto/contracts/upto-settlement` | Soroban pull/pay/refund execution and invariant checks. |
+| Reconciling policy | `x402-stellar-upto/contracts/reconciling-policy` | Optional OpenZeppelin-compatible budget release hook. |
+| Facilitator path | `facilitator/src/stellar/upto.ts` | Re-verification, actual extraction, simulation, fee gate, and submission. |
+| Evidence | `docs/reference/upto-conformance` | Testnet hashes and measured release boundary. |
+
+## Install the temporary client
+
+```bash
+npm install @openx402/stellar-upto @x402/core @x402/stellar
+```
+
+The package intentionally returns the unchanged Stellar wire payload:
+
+```json
+{ "transaction": "<base64 Soroban transaction>" }
+```
+
+No new x402 JSON field is introduced. Contract and facilitator addresses are
+SDK configuration because the v2 wire format has no slots for them.
+
+## Client setup
+
+```ts
+import { x402Client } from "@x402/core/client";
+import { HTTPFacilitatorClient } from "@x402/core/http";
+import { createEd25519Signer } from "@x402/stellar";
+import { UptoStellarScheme } from "@openx402/stellar-upto/client";
+
+const network = "stellar:testnet" as const;
+const facilitator = new HTTPFacilitatorClient({
+  url: process.env.FACILITATOR_URL!,
+});
+
+const client = new x402Client().register(
+  network,
+  new UptoStellarScheme(
+    createEd25519Signer(process.env.BUYER_SECRET_KEY!, network),
+    {
+      facilitatorClient: facilitator,
+      // Optional: contract address is fixed for the checked-in testnet profile.
+      settlementHook: process.env.SETTLEMENT_HOOK,
+    },
+  ),
+);
+```
+
+The client resolves the latest ledger, derives the ledger validity window from
+`maxTimeoutSeconds`, binds the payer, payTo, token, maximum, network,
+settlement contract, facilitator, settlement ID, and optional hook, signs the
+payer authorization entry, and leaves only the facilitator authorization to be
+completed.
+
+## Resource-server setup
+
+The resource server registers the temporary server-side scheme alongside the
+facilitator. The server-side adapter parses Stellar asset prices and preserves
+the standard `extra.areFeesSponsored` requirement; it does not settle the
+transaction itself.
+
+```ts
+import express from "express";
+import { paymentMiddleware, setSettlementOverrides, x402ResourceServer } from "@x402/express";
+import { ExactStellarScheme } from "@x402/stellar/exact/server";
+import { UptoStellarServerScheme } from "@openx402/stellar-upto";
+import { createEmbeddedFacilitator } from "@openx402/stellar-facilitator";
+
+const network = "stellar:testnet" as const;
+const asset = process.env.STELLAR_ASSET!;
+const payTo = process.env.SELLER_PAY_TO!;
+const facilitator = await createEmbeddedFacilitator();
+const resourceServer = new x402ResourceServer(facilitator)
+  .register(network, new ExactStellarScheme())
+  .register(network, new UptoStellarServerScheme());
+
+const app = express();
+app.use(paymentMiddleware({
+  "GET /metered": {
+    accepts: [{
+      scheme: "upto",
+      price: { asset, amount: "10000" },
+      network,
+      payTo,
+      maxTimeoutSeconds: 60,
+    }],
+    description: "Returns a metered response.",
+    mimeType: "application/json",
+  },
+}, resourceServer));
+
+app.get("/metered", (_request, response) => {
+  setSettlementOverrides(response, { amount: "3000" });
+  response.json({ unitsUsed: 3000 });
+});
+```
+
+The complete runnable version is
+[`facilitator/examples/self-facilitating-resource-server/index.ts`](https://github.com/Ithaca-Labs/openx402/blob/main/facilitator/examples/self-facilitating-resource-server/index.ts).
+Embedded facilitation still requires PostgreSQL so idempotency, channel leases,
+budgets, and unknown-transaction recovery survive a process restart. For a
+shared deployment, replace `createEmbeddedFacilitator()` with the HTTP
+facilitator client described in [self-hosting](/operations/self-hosting).
+
+## Contract algorithm
+
+The Soroban contract performs one atomic execution:
+
+1. require the payer authorization for the declared arguments;
+2. require the facilitator authorization for the complete call including
+   `actual`;
+3. reject negative or over-maximum `actual` values;
+4. require the allowance to equal exactly `max_amount`;
+5. approve/pull the maximum from the payer;
+6. pay `actual` to the bound recipient;
+7. refund `max_amount - actual` to the payer;
+8. consume the allowance and host authorization nonce;
+9. invoke the optional hook after the payment/refund window;
+10. re-check allowance, payer, recipient, and event/balance invariants; and
+11. emit the terminal settlement event.
+
+Zero settlement submits a real contract transaction. It pays no asset but still
+consumes the authorization nonce, fully refunds the temporary pull, fires the
+optional hook, and returns a real transaction hash. Skipping submission would
+leave the nonce reusable for a later non-zero settlement.
+
+## Ledger validity ordering
+
+The three clocks must be ordered as:
+
+```text
+allowance expiration_ledger >= contract deadline >= settlement ledger
+```
+
+The signature expiration is derived from the seller's maximum timeout and the
+current ledger estimate. A seller-controlled long timeout can increase Soroban
+host nonce rent, so the facilitator enforces an operator maximum and applies
+the fee ceiling to the enforcing simulation result.
+
+## Upto configuration
+
+Upto is enabled per network. The contract address is an operator-controlled
+deployment value; it is not accepted from the payment payload. The checked-in
+testnet profile uses the measured contract and fee ceilings below. Pubnet has
+no default contract and remains fail-closed.
+
+```yaml
+networks:
+  stellar:testnet:
+    enabled: true
+    upto_contract: CDEI3W6ZFW6BFSU37VL265OSOGKSM3BR3TZVUR5NZ4UER6FOMVJUKOOT
+    max_timeout_seconds: 300
+    allowed_settlement_hooks: []
+    fees:
+      upto:
+        max_resource_fee_stroops: "5000000"
+        max_inclusion_fee_stroops: "200"
+        max_total_fee_stroops: "5000200"
+```
+
+The facilitator advertises `upto` in `/supported` only when `upto_contract` is
+configured for that network. Do not raise the fee ceiling without fresh
+enforcing-simulation p99 measurements. The full network, asset, sponsorship,
+search, catalog, and pubnet startup controls are in the
+[configuration reference](/reference/configuration).
+
+## Settlement hooks
+
+The hook is an optional, versioned protocol boundary, not a required policy
+implementation. It receives a `SettlementNoticeV1` containing the settlement
+ID, payer, recipient, token, maximum, and actual. The facilitator and ledger
+deadline are not fields in the current notice ABI; the hook can bind its own
+caller check to the settlement contract.
+
+- The hook fires for zero settlement too.
+- The hook runs on the facilitator's sponsored transaction and therefore inside
+  the enforcing simulation fee gate.
+- A payer-signed hook that is unavailable or reverts bricks that payer's own
+  settlement; this is the payer's availability risk.
+- The settlement contract rejects a hook equal to itself or the token contract.
+- The post-hook invariant recheck is normative, not merely a test: a malicious
+  hook cannot alter the final balance/allowance outcome undetected.
+- Re-entry is bounded by authorization nonce consumption; the contract holds
+  no payment balance at callback time because refund already completed.
+
+The optional reference policy uses the hook to reconcile a conservative maximum:
+
+```text
+policy.enforce(payment_id, max_amount) -> reserve max_amount
+settlement.on_settled_v1(notice) -> release(max_amount - actual)
+```
+
+The hook ABI ships now; the reference policy remains optional and off the
+critical default path.
+
+## OpenZeppelin smart-account composition
+
+An OZ smart account needs two context rules for the nested authorization tree:
+
+```text
+context_rule_ids = [
+  CallContract(settlement_contract),
+  CallContract(token_contract),
+]
+signers = [agent_key]
+policies = [reconciling_policy]
+```
+
+The first rule covers the settlement root; the second covers the nested SEP-41
+`approve` invocation. Record-mode simulation does not execute `__check_auth`,
+so it cannot prove policy behavior. The facilitator records resources, the buyer
+signs, then enforcing simulation executes the real account check and hook before
+fee ceilings or submission.
+
+The effective agent ceiling is the minimum of:
+
+1. local agent/MCP budget;
+2. signed x402 maximum; and
+3. on-chain smart-account spending policy.
+
+The reference reconciling policy is tested with real authorization entries, not
+`mock_auths()` or `mock_all_auths()`.
+
+## Failure semantics
+
+| Case | Result |
+| --- | --- |
+| `actual = 0` | Real terminal transaction; full refund; nonce consumed. |
+| `0 < actual < max` | Actual paid, remainder refunded, allowance zero. |
+| `actual = max` | Full maximum paid, no remainder. |
+| `actual > max`, negative, overflow | Rejected before token mutation. |
+| Definitive transaction failure | Atomic rollback; authorization may be retried while valid. |
+| Lost/unknown RPC response | Persist hash and poll; never blindly resubmit. |
+| Concurrent duplicate authorization | Channel/idempotency controls prevent double submission; on-chain nonce rejects replay. |
+| Hook failure | Whole transaction reverts; payer chose the hook and bears availability risk. |
+
+Insufficient balance, missing trustline, expired allowance, failed token call,
+failed recipient transfer, malformed auth tree, changed recipient/token/contract,
+and invalid custom-account policy all revert without partial balance changes.
+
+## Evidence boundary
+
+Testnet evidence currently covers zero, partial, maximum, replay, concurrency,
+custom accounts, settlement hooks, and real reconciling-policy authorization.
+The remaining release work is upstream TSC review, canonical reusable client
+merge, external contract audit, pubnet contract deployment, measured pubnet
+fees, issued-USDC matrix coverage, and canonical pubnet transaction hashes.
+
+See [Upto concept](/concepts/upto), [smart-account composition](/concepts/smart-accounts),
+and [upto conformance](/reference/upto-conformance) before using this path.

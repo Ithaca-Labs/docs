@@ -1,0 +1,212 @@
+---
+title: "MCP tool reference"
+description: "Inputs, outputs, transports, signer modes, budgets, and failure behavior for the agent-facing MCP server."
+sidebarTitle: "MCP tools"
+keywords:
+  - "x402_search_resources"
+  - "x402_get_resource"
+  - "x402_call_resource"
+  - "MCP payment"
+  - "agent budget"
+---
+
+`@openx402/mcp-server` is a separate agent-facing process. It consumes the
+facilitator's public discovery HTTP API and never imports facilitator internals
+or connects to the facilitator database. The facilitator can run without it.
+
+The hosted profile is discovery-only (`signer.mode: none`), so it registers
+search and get. The paid call tool is registered only when a signer is
+configured. This is deliberate: a public MCP endpoint must not accidentally
+hold a payer key.
+
+## Transports and endpoints
+
+| Transport | Endpoint | Intended use |
+| --- | --- | --- |
+| stdio | process stdin/stdout | Local agent runtime; default profile. |
+| Streamable HTTP | `POST`, `GET`, `DELETE /mcp` | Primary remote deployment. |
+| SSE | `GET /sse`, `POST /messages?sessionId=...` | Compatibility transport for existing clients and E2E fixtures. |
+| HTTP health | `GET /healthz` | Reports discovery readiness, payment availability, and enabled networks. |
+
+Remote transports require bearer authentication whenever a signer is enabled.
+Discovery-only remote deployments may remain public. Configure keys through the
+environment variable named by `http.api_keys_env`.
+
+## `x402_search_resources`
+
+Search or browse the facilitator's canonical Bazaar catalog.
+
+```json
+{
+  "query": "weather for Mumbai",
+  "type": "http",
+  "network": "stellar:testnet",
+  "scheme": "exact",
+  "asset": "C...",
+  "limit": 10,
+  "cursor": "..."
+}
+```
+
+All fields are optional. `query` selects `/discovery/search`; without it the
+tool browses `/discovery/resources`. Supported filters are `type`, `network`,
+`scheme`, `payTo`, `asset`, and `extensions`.
+
+The tool returns:
+
+```json
+{
+  "x402Version": 2,
+  "resources": [
+    {
+      "resource": { "resource": "https://seller.example/mcp", "type": "mcp", "accepts": [] },
+      "wrapper": {
+        "ref": "v1.eyJ...",
+        "versionHash": "sha256-hex",
+        "provenance": "seller_declared",
+        "status": "active",
+        "warnings": []
+      }
+    }
+  ],
+  "partialResults": false,
+  "pagination": { "limit": 10, "cursor": null }
+}
+```
+
+The canonical resource is passed through unchanged. The sibling wrapper is MCP
+metadata, not a new Bazaar wire field. `ref` encodes the exact identity tuple:
+`(type, resource URL, toolName)` for MCP or `(type, resource URL)` for HTTP.
+
+An empty result is a structured `NO_RESULTS` error rather than an empty success
+payload, so an agent can distinguish “nothing matched” from a transport failure.
+
+## `x402_get_resource`
+
+Resolve a stable reference and read the current canonical resource:
+
+```json
+{
+  "ref": "v1.eyJ...",
+  "expectedVersionHash": "sha256-hex"
+}
+```
+
+The version hash covers declaration fields and every accepted payment option.
+If the expected hash differs, the current resource is returned with
+`status: "stale"` and a warning. A malformed reference or missing active entry
+returns `INVALID_ARGUMENT` or `NO_RESULTS`; this tool never fetches an arbitrary
+URL supplied by an agent.
+
+## `x402_call_resource`
+
+This tool is available only with a configured signer and only calls cataloged
+MCP resources. It accepts:
+
+```json
+{
+  "ref": "v1.eyJ...",
+  "expectedVersionHash": "sha256-hex",
+  "arguments": { "ticker": "AAPL" },
+  "network": "stellar:testnet",
+  "scheme": "exact",
+  "asset": "C...",
+  "maxAtomicAmount": "10000"
+}
+```
+
+The server performs this fixed sequence:
+
+1. Resolve the reference and require the active catalog version.
+2. Reject a changed `expectedVersionHash` before any network call or signing.
+3. Resolve a connectable MCP endpoint and apply SSRF-safe DNS/IP checks.
+4. Call the declared tool without payment using exactly the supplied arguments.
+5. Validate both x402 `PaymentRequired` copies in the MCP metadata.
+6. Compare resource URL, tool name, transport, input schema, selected network,
+   scheme, asset, recipient, amount, timeout, and extension data with the
+   catalog version.
+7. Reserve the local budget before constructing or signing anything.
+8. Create one Payment Identifier for this logical invocation.
+9. Sign one canonical x402 payment and retry the same tool call once.
+10. Validate the settlement response's success, network, payer, amount, and
+    transaction metadata.
+11. Reconcile the reservation and return the upstream tool output plus receipt.
+
+The paid call returns the upstream tool content unchanged and a receipt:
+
+```json
+{
+  "content": { "summary": "..." },
+  "receipt": {
+    "paymentIdentifier": "sha256-hex",
+    "ref": "v1.eyJ...",
+    "versionHash": "sha256-hex",
+    "network": "stellar:testnet",
+    "scheme": "exact",
+    "asset": "C...",
+    "payTo": "G...",
+    "authorizedAmount": "10000",
+    "settledAmount": "10000",
+    "transaction": "stellar-tx-hash",
+    "status": "settled"
+  }
+}
+```
+
+## Error contract
+
+Every failure is JSON with `schemaVersion`, `code`, `message`, `retryable`,
+and optional `details`. Agents branch on `code`, not prose. The stable codes are:
+
+| Code | Meaning |
+| --- | --- |
+| `INVALID_ARGUMENT` | Input, reference, or configuration shape is invalid. |
+| `NO_RESULTS` | No active catalog entry matched. |
+| `RESOURCE_STALE` | The selected version hash no longer matches. |
+| `RESOURCE_CHANGED` | The live payment challenge differs from the catalog. |
+| `UNTRUSTED_REDIRECT` | A redirect violates same-origin or endpoint policy. |
+| `PAYMENT_REQUIRED` | The resource still requires payment. |
+| `BUDGET_EXCEEDED` | Per-call or session/day ceiling would be exceeded. |
+| `PAYMENT_REJECTED` | Signing, terms, or settlement was conclusively rejected. |
+| `SETTLEMENT_UNKNOWN` | A signed payment has no confirmed final response. |
+| `UPSTREAM_TIMEOUT` | A bounded network operation timed out. |
+| `UPSTREAM_PROTOCOL_ERROR` | The upstream response was malformed or oversized. |
+
+`SETTLEMENT_UNKNOWN` is not permission to authorize a second payment. The
+reservation remains held until an operator or a future polling path resolves it.
+
+## Signer and budget modes
+
+| Signer mode | Transport | Key location |
+| --- | --- | --- |
+| `none` | Any | No payment tool; discovery only. |
+| `env-secret` | stdio only | Raw Stellar secret in an operator environment variable. |
+| `external` | Remote transports | HTTPS signer with `/address` and `/sign-auth-entry`. |
+| `encrypted-key` | Remote transports | AES-256-GCM keystore decrypted from a 32-byte environment key. |
+
+No tool schema accepts secret material. The budget store uses decimal strings at
+the boundary and `bigint` internally. The effective cap is the minimum of the
+per-call limit, remaining session/day limit, selected x402 amount or maximum,
+and any known smart-account policy ceiling. Exact payments cannot be reduced;
+an insufficient cap returns `BUDGET_EXCEEDED`. Upto remains interface-ready
+but fails closed until a reusable Stellar client is available upstream.
+
+Remote pubnet paid calls additionally require explicit pubnet enablement,
+authenticated access, a signer, and a PostgreSQL budget store. This prevents a
+restart or replica from losing the spend ledger.
+
+## Network security
+
+Outbound MCP connections pin DNS resolution for the request, block loopback,
+private, link-local, cloud-metadata, and multicast ranges, require HTTPS unless
+`allow_insecure_local` is explicitly enabled, cap redirects, cap response bytes,
+bound JSON depth and timeouts, and limit concurrent connections. `mcp://`
+identifiers are symbolic; they are rejected unless the operator maps them to a
+verified HTTPS endpoint in `resolved_mcp_endpoints`.
+
+The server probes a seller with `initialize` and `tools/list`, never `tools/call`.
+Seller descriptions, schemas, and outputs remain inert data and are never fed
+into an instruction-generating model.
+
+See [MCP guide](/guides/mcp), [smart accounts](/concepts/smart-accounts), and
+[configuration](/reference/configuration) for deployment examples.

@@ -1,0 +1,129 @@
+---
+title: "Storage and recovery"
+description: "The single-PostgreSQL data model, migrations, leases, backups, and recovery boundaries."
+sidebarTitle: "Storage"
+keywords:
+  - "PostgreSQL schema"
+  - "pgvector"
+  - "idempotency"
+  - "backup"
+  - "recovery"
+---
+
+The facilitator uses one PostgreSQL instance for payment durability, channel
+leases, cataloging, analytics, search, impressions, evaluation suites, and
+embedding jobs. Redis, a separate search service, and a second required
+database are not part of the deployment.
+
+## Core payment state
+
+| Table | Responsibility |
+| --- | --- |
+| `managed_keys` | Encrypted sponsor and channel secret material, key version, active state, and network. |
+| `channel_accounts` | Per-network source accounts, lease owner/expiry, fencing token, sequence, and unresolved state. |
+| `idempotency_records` | Fingerprint, scheme/network, prepared envelope, transaction hash, status, response, and error. |
+| `sponsor_daily_usage` | Database-backed per-key and global sponsored stroop budgets. |
+| `simulation_windows` | Bounded simulation counters by time window and principal. |
+| `settlement_audit` | Append-only lifecycle events for prepare, submit, polling, and recovery. |
+
+The idempotency row is written before an outer transaction is submitted. If an
+RPC response is lost, the stored hash is polled before any retry decision. A
+replica cannot lease the same channel account while another fencing token is
+current.
+
+## Catalog and analytics state
+
+| Table | Responsibility |
+| --- | --- |
+| `catalog_state` | Monotonic snapshot watermark used by signed discovery cursors. |
+| `catalog_resources` | Stable normalized HTTP/MCP identity and owner `payTo`. |
+| `catalog_resource_versions` | Append-only seller declaration versions and provenance. |
+| `catalog_payment_options` | Append-only scheme/network/asset/amount options per version. |
+| `catalog_observations` | Every indexing attempt, including soft drops and reasons. |
+| `catalog_search_documents` | Deterministic canonical text and weighted lexical projection. |
+| `payment_events` | Verification/settlement facts with payer, recipient, amount, fee, hash, and error. |
+| `payment_daily_totals` | Correctable daily rollups by network, scheme, asset, recipient, and status. |
+
+Catalog declaration and payment-option rows are not overwritten when a seller
+changes price or metadata. This preserves the terms associated with historical
+payments and allows an operator to explain why one version was active.
+
+## Search state
+
+`search_model_generations` records provider, logical model ID, revision,
+dimension, pooling, normalization, checksum, and lifecycle status. Exactly one
+generation may be active. Each generation has a typed table named
+`catalog_embeddings_g<id>` with a dimension-specific vector column and HNSW
+cosine index. Separate tables make dimension mixing structurally impossible.
+
+The shared `catalog_index_jobs` queue has leases, attempts, backoff, fencing
+tokens, completion state, and dead-letter reasons. `search_impressions` records
+query session, mode, reranking, generation, ranking configuration, resource
+position, score, degraded branches, latency, and timestamp. Migration 006 adds
+`search_sessions` and `search_resource_fetches` for page/fetch attribution.
+
+## Migration order
+
+Migrations are forward-only and numbered:
+
+1. `001_core.sql` — keys, channels, idempotency, budgets, audit.
+2. `002_catalog.sql` — catalog, payment events, daily totals, lexical document,
+   and index-job queue.
+3. `003_search.sql` — optional pgvector, generations, typed embedding storage,
+   impressions, evaluation tables, and job lifecycle extensions.
+4. `004_weighted_search.sql` — weighted lexical fields and phrase-aware search.
+5. `005_stuffing_resistance.sql` — unique-lexeme lexical projection so repeated
+   seller keywords cannot increase rank.
+6. `006_search_feedback.sql` — sessions and explicit resource fetch telemetry.
+
+Run migrations through the service package:
+
+```bash
+cd facilitator
+npm run migrate
+```
+
+The migration runner uses the `schema_migrations` table and a PostgreSQL
+advisory lock. Do not edit an applied migration; add the next numbered file.
+
+## pgvector is optional
+
+Migration 003 attempts to install `vector` inside an exception block. If the
+operator cannot install the extension, no embedding table is created, no
+embedding job is claimed, and discovery search falls back to PostgreSQL FTS.
+The default Compose image includes pgvector, but lexical-only operation is a
+supported mode rather than a startup failure.
+
+## Backup and restore
+
+Back up the PostgreSQL database, the encrypted key-encryption secret, and the
+operator configuration together. A database backup without the encryption key
+cannot decrypt managed sponsor/channel keys; a key backup without the database
+cannot recover idempotency or sequence state safely.
+
+Before restore:
+
+1. stop settlement traffic or put the service in a maintenance window;
+2. restore PostgreSQL and verify migration version;
+3. restore the exact key-encryption secret and configuration generation;
+4. mark any in-flight `preparing`, `submitting`, `pending`, or `unknown` rows
+   for hash polling rather than resubmission;
+5. verify channel-account sequence state against Stellar RPC;
+6. run `/health/ready`, `/analytics/v1/search/status`, and a signed testnet
+   verification before reopening traffic.
+
+Never restore an old database over a newer live database without reconciling
+settlement hashes. The service's durable unknown-transaction recovery exists to
+avoid double submission; bypassing it defeats that invariant.
+
+## Retention
+
+Retention is operator-configurable for payment events, observations, search
+impressions, audit records, and inactive catalog versions. Keep settlement
+records long enough to answer financial and incident questions; archive before
+deleting if the dashboard or grant evidence depends on them. Removing an
+impression reduces conversion attribution but cannot change a payment or
+catalog version.
+
+See [configuration](/reference/configuration), [analytics](/reference/analytics),
+and [self-hosting](/operations/self-hosting) for deployment settings.
