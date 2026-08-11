@@ -76,7 +76,6 @@
       {
         "group": "Protocol",
         "pages": [
-          "concepts/architecture",
           "concepts/exact"
         ]
       },
@@ -109,6 +108,18 @@
           "reference/cli"
         ]
       }
+        ]
+      },
+      {
+        "tab": "Architecture",
+        "groups": [
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "concepts/architecture"
+            ]
+          }
         ]
       },
       {
