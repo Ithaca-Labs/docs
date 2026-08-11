@@ -1,0 +1,580 @@
+---
+title: "Proposed architecture"
+description: "Review the complete Openx402 architecture, evidence, evaluation program, operational model, and delivery boundary."
+sidebarTitle: "Proposed architecture"
+mode: "wide"
+keywords:
+  - "Openx402 architecture"
+  - "Stellar x402 facilitator"
+  - "Stellar Bazaar"
+  - "Stellar upto"
+  - "search evaluation"
+---
+
+Openx402 is an open, self-hostable x402 payment and discovery stack for
+Stellar. We operate a hosted service for convenience and publish the identical
+Apache-2.0 implementation and deployment configuration for independent
+operators. The required self-hosted deployment is one Openx402 service and one
+PostgreSQL instance.
+
+The architecture supports `stellar:testnet` and `stellar:pubnet`, exact and
+proposed `upto` settlement, automatic Bazaar cataloging, hybrid search, MCP
+discovery, fee sponsorship, and local buyer signing. Payment correctness never
+depends on an embedding provider, reranker, dashboard, or hosted Openx402
+operator.
+
+<Warning>
+  Exact settlement and the hosted Bazaar have testnet evidence. Stellar
+  `upto` is implemented and tested on testnet but remains a proposed upstream
+  scheme. Pubnet activation, canonical `upto` integration, fee calibration,
+  and external review remain delivery work and are not claimed as complete.
+</Warning>
+
+## Review entry points
+
+- [Open the source repository](https://github.com/Ithaca-Labs/openx402)
+- [Read the proposed Stellar `upto` specification](https://github.com/Ithaca-Labs/openx402/blob/main/x402-stellar-upto/spec/scheme_upto_stellar.md)
+- [Review the `upto` testnet evidence and fee measurements](https://github.com/Ithaca-Labs/openx402/blob/main/x402-stellar-upto/evidence/testnet-report.md)
+- [Inspect the search benchmark, runs, and reports](https://github.com/Ithaca-Labs/openx402/tree/main/facilitator/handwritten-evals)
+- [Install the published Bazaar seller SDK](https://www.npmjs.com/package/@openx402/bazaar-sdk)
+- [Deploy the self-hosted stack on Railway](https://railway.com/deploy/uKrE3J)
+
+The deeper technical references are the [facilitator architecture](/concepts/architecture),
+[API reference](/reference/api), [configuration reference](/reference/configuration),
+[security boundary](/operations/security), [self-hosting guide](/operations/self-hosting),
+and [release plan](https://github.com/Ithaca-Labs/openx402/blob/main/scf-build-plan/README.md).
+
+## On this page
+
+- [System overview](#system-overview)
+- [Facilitator and exact settlement](#facilitator-and-exact-settlement)
+- [Assets, trustlines, and amounts](#assets-trustlines-and-amounts)
+- [Stellar upto and smart-account budgets](#stellar-upto-and-smart-account-budgets)
+- [Bazaar catalog and search](#bazaar-catalog-and-search)
+- [Search evaluation](#search-evaluation)
+- [Clients, SDKs, and examples](#clients-sdks-and-examples)
+- [MCP discover, pay, and retry](#mcp-discover-pay-and-retry)
+- [Hosted and self-hosted deployment](#hosted-and-self-hosted-deployment)
+- [Security and failure handling](#security-and-failure-handling)
+- [Transaction and conformance testing](#transaction-and-conformance-testing)
+- [Configuration surface](#configuration-surface)
+- [Maintenance and conformance](#maintenance-and-conformance)
+- [Delivery boundary](#delivery-boundary)
+
+## System overview
+
+<Frame caption="Openx402 separates seller integration, agent discovery, payment verification, settlement state, and successful outcomes.">
+  <img src="/images/architecture/system-overview.png" alt="System architecture showing sellers, agents, operators, Openx402, PostgreSQL, Stellar settlement, and successful outcomes." />
+</Frame>
+
+- **Seller boundary:** the seller SDK compiles readable route, payment, and
+  discovery configuration into the official x402 and Bazaar structures. The
+  seller application executes its own code; the facilitator never proxies or
+  executes it.
+- **Buyer boundary:** the buyer or agent owns its signer, inspects the 402
+  terms, signs locally, and retries the resource request. Buyer secrets do not
+  belong in the hosted facilitator or discovery MCP.
+- **Facilitator boundary:** the facilitator verifies the payment, enforces
+  operator limits, sponsors the Stellar fee, submits the exact persisted
+  envelope, and returns a standard response.
+- **Bazaar boundary:** valid seller metadata is cataloged after the payment
+  decision. Invalid metadata is soft-dropped and cannot turn a valid payment
+  into an application error.
+- **State boundary:** PostgreSQL stores idempotency, settlement recovery,
+  channel leases, sponsor budgets, catalog versions, search documents,
+  embeddings, evaluation signals, and analytics.
+- **On-chain boundary:** Stellar consumes the authorization nonce and records
+  token movement and fees. The facilitator never becomes the source of seller
+  funds.
+
+## Facilitator and exact settlement
+
+Openx402 builds on `@x402/stellar` for canonical Stellar exact parsing and
+validation. The production service adds the durable orchestration a public
+fee-sponsoring operator needs: dual simulation, channel-account sequencing,
+distributed idempotency, sponsor budgets, transaction recovery, and cataloging.
+
+<Frame caption="Exact payment authorization, enforcing simulation, fee sponsorship, Stellar settlement, and deterministic outcomes.">
+  <img src="/images/architecture/exact-payment.png" alt="Exact payment flow from HTTP 402 through local authorization, facilitator verification, fee-sponsored Stellar settlement, and response." />
+</Frame>
+
+- Record simulation builds the Soroban footprint and authorization tree.
+- The buyer signs the authorization entry rather than a prebuilt facilitator
+  transaction.
+- Enforcing simulation executes custom `__check_auth` logic and optional
+  contract calls before the facilitator applies its fee ceiling.
+- A PostgreSQL lease assigns a channel account with a fencing token. This
+  avoids one Stellar source account becoming a sequence-number bottleneck.
+- The facilitator rebuilds the verified invocation with the leased channel as
+  source and wraps it in a sponsor-signed fee-bump transaction.
+- The final envelope XDR and hash are persisted before submission. A lost RPC
+  response causes hash polling, never blind reconstruction and resubmission.
+- Every rejected x402 request returns a non-null protocol reason.
+
+Evidence: [canonical exact testnet transaction](https://stellar.expert/explorer/testnet/tx/efa579ad8a9b2fb456dcf7803955d0cf5fc32f8db33329508885f96d493aa532),
+[exact scheme details](/concepts/exact), and
+[embedded self-facilitation](/guides/embedded-facilitator).
+
+## Assets, trustlines, and amounts
+
+Openx402 treats the Stellar token contract as part of the signed payment, not
+as a display symbol. Operators configure an allowlist of SEP-41 contract
+addresses for each network. USDC is the default documented issued asset, while
+native XLM is reached through its Stellar Asset Contract.
+
+- Payment amounts remain integer atomic-unit strings from wire parsing through
+  contract invocation and analytics. JavaScript floating-point values are not
+  accepted for settlement.
+- Stellar USDC uses seven decimal places. Decimals are stored with the asset
+  configuration rather than inferred from USDC deployments on other chains.
+- A classic `G...` recipient needs a trustline and any required issuer
+  authorization before receiving an issued asset. Native XLM does not require
+  a trustline.
+- A Soroban `C...` recipient and custom SEP-41 token may have different receive
+  behavior. The facilitator verifies the configured token invocation and
+  relies on enforcing simulation to detect token-level rejection.
+- The seller owns trustline onboarding. The facilitator and seller SDK do not
+  create trustlines, opt accounts into assets, or bypass issuer controls.
+- Fee sponsorship covers Stellar network fees only. It does not fund the
+  payer's token balance or create the seller's trustline.
+- Missing recipient trustline, insufficient balance, authorization-required
+  assets, paused assets, failed token calls, and incompatible token behavior
+  are rejected before serving the paid resource whenever simulation can prove
+  the failure.
+
+Current tests cover Stellar's ordinary SEP-41 path, a six-decimal contract
+token fixture, authorization-restricted SAC accounts, and a clawback-capable
+SAC. Live issued-USDC settlement plus paused, error-returning, and
+unusual-but-compliant token variants remain documented production release
+gates. See [exact assets and trustlines](/concepts/exact), the
+[seller SDK asset surface](/reference/sdk-surface#payment-inputs-and-assets),
+and [SEP-41 implementation notes](https://github.com/Ithaca-Labs/openx402/blob/main/facilitator/docs/SEP41.md).
+
+## Stellar upto and smart-account budgets
+
+`upto` lets a buyer authorize a maximum while the resource server reports the
+actual amount after metered work completes. The facilitator verifies that
+amount, signs it, and settles only when it is within the authorized maximum.
+Stellar requires a Soroban settlement contract because a bare SEP-41 allowance
+cannot enforce terminal single settlement and recipient binding.
+
+### What we have built
+
+- We built the proposed [Stellar `upto` specification](https://github.com/Ithaca-Labs/openx402/blob/main/x402-stellar-upto/spec/scheme_upto_stellar.md) and an [immutable Soroban settlement contract](https://github.com/Ithaca-Labs/openx402/tree/main/x402-stellar-upto/contracts/upto-settlement) that pulls the maximum, pays the actual amount, refunds the remainder, and consumes zero-value authorizations on-chain.
+- The implementation supports zero, partial and maximum settlement, atomic rollback, replay protection, concurrent submissions, optional settlement hooks, ordinary SEP-41 tokens, G-accounts, and custom `__check_auth` accounts; 36 Rust tests pass and the complete [testnet report](https://github.com/Ithaca-Labs/openx402/blob/main/x402-stellar-upto/evidence/testnet-report.md) is published.
+- Live evidence includes [partial settlement](https://stellar.expert/explorer/testnet/tx/f80ade7fb080337392d11fd60535d0c37f296447c1aa4cf3ca3f9310224d7920), [zero settlement](https://stellar.expert/explorer/testnet/tx/e6b3b9012ebe5e7808c2c7fa74e47c7386fb3a9e11a76f4fba8358b4397c76ba), and a [real OpenZeppelin smart-account policy flow](https://stellar.expert/explorer/testnet/tx/9569422fd4fed8bdff13432e729ef1287f0ecec8ea1e9bffcaa7bb46a098da65) using two context rules and actual-amount budget reconciliation.
+- The design is ready for SDF and x402 TSC review; canonical upstream integration, independent audit, production fee calibration, and pubnet deployment remain grant deliverables.
+
+<Frame caption="The agent authorizes a cap, the smart account reserves it, the contract settles actual usage, and an optional hook reconciles the budget.">
+  <img src="/images/architecture/upto-smart-account.png" alt="Stellar upto architecture with agent authorization, two smart-account context rules, facilitator checks, settlement contract, optional hook, and budget outcomes." />
+</Frame>
+
+The payer binds the recipient, token, maximum, validity window, facilitator,
+settlement identifier, optional hook, settlement contract, payer credential,
+and Stellar network context. The facilitator signs `actual`, which must satisfy
+`0 <= actual <= maximum`.
+
+An OpenZeppelin smart account uses two correlated context rules:
+
+1. `CallContract(settlement_contract)` for the outer settlement call.
+2. `CallContract(token_contract)` for the nested SEP-41 approval.
+
+The optional reconciling policy reserves the maximum during authorization. A
+versioned settlement hook releases `maximum - actual`, including the full
+reservation for a zero settlement. Both hook and no-hook paths finish with the
+same mandatory balance, allowance, and nonce checks. Hook execution is inside
+enforcing simulation and the facilitator-sponsored fee gate.
+
+<Info>
+  `upto` caps what the seller can collect. It does not independently prove
+  that the seller's reported usage was honest. Buyers must choose sellers and
+  metering systems accordingly.
+</Info>
+
+Read the [upto concept](/concepts/upto), [smart-account composition](/concepts/smart-accounts),
+[threat model](https://github.com/Ithaca-Labs/openx402/blob/main/x402-stellar-upto/docs/THREAT_MODEL.md),
+[claims matrix](https://github.com/Ithaca-Labs/openx402/blob/main/x402-stellar-upto/evidence/CLAIMS.md),
+and [remaining release gaps](https://github.com/Ithaca-Labs/openx402/blob/main/x402-stellar-upto/docs/RELEASE_GAPS.md).
+
+### Contract lifecycle
+
+The proposed settlement contract is immutable and administrator-free. It has
+no upgrade function, emergency pause, application-defined persistent state, or
+contract-level token allowlist. This keeps the default settlement path small
+and makes deployed Wasm reproducible, but it also means a defect requires a new
+contract deployment and facilitator configuration migration rather than an
+in-place upgrade.
+
+The contract instance and Wasm code are still Stellar ledger entries with TTL
+and rent. Operators must monitor and extend both before archival. The accepted
+contract address is pinned in client and facilitator configuration and
+published in the deployment manifest; it is not added to the x402 wire format.
+`/supported` advertises only the standard scheme, network, signer, and
+`extra.areFeesSponsored` fields. To migrate, operators publish the replacement
+Wasm hash and address, stop issuing authorizations for the old address, allow
+old in-flight authorizations to expire, and then switch the configured address.
+The security review covers the contract, auth-entry construction, facilitator
+validation, optional hook, and migration runbook.
+
+## Bazaar catalog and search
+
+The Bazaar is an off-chain index derived from seller-declared metadata. A
+seller does not register separately. The facilitator observes the official
+discovery extension in a payment payload, validates it, records the outcome,
+and reports success or rejection through `EXTENSION-RESPONSES`.
+
+<Frame caption="Validated seller metadata enters PostgreSQL, then hard filters and hybrid retrieval produce ranked Bazaar results and quality signals.">
+  <img src="/images/architecture/bazaar-search-evaluation.png" alt="Bazaar architecture showing automatic cataloging, PostgreSQL indexing, hybrid search, lexical fallback, results, and quality measurement." />
+</Frame>
+
+- HTTP resources are identified by normalized URL or route template and HTTP
+  method. MCP resources are keyed by `(resource.url, input.toolName)`.
+- Route templates are percent-decoded before traversal checks. Client-echoed
+  metadata cannot change another seller's `payTo`, asset, network, or observed
+  payment terms.
+- Catalog versions and payment options are append-only. A changed recipient is
+  quarantined rather than silently replacing the observed seller.
+- Search applies supported structured constraints before ranking.
+- PostgreSQL full-text retrieval and pgvector candidates are combined by
+  reciprocal rank fusion. An optional reranker can reorder the top candidate
+  set.
+- Missing embeddings, pgvector, model access, or reranking degrades to
+  PostgreSQL lexical search. Payment verification remains unchanged.
+- Seller metadata is the only source of catalog claims. Openx402 never uses an
+  LLM to invent a description, capability, parameter, price, or output.
+
+Read [Bazaar cataloging](/concepts/bazaar), [catalog lifecycle](/concepts/catalog-lifecycle),
+[search architecture](/concepts/search), the
+[catalog trust boundary](https://github.com/Ithaca-Labs/openx402/blob/main/facilitator/docs/CATALOG-TRUST.md),
+and the [search implementation](https://github.com/Ithaca-Labs/openx402/blob/main/facilitator/docs/SEARCH.md).
+
+## Search evaluation
+
+Search quality is measured separately from payment conformance. A relevant
+result does not prove a valid payment, and a valid payment does not prove good
+ranking. The evaluation program uses controlled fixtures for reproducibility
+and separately versioned ecosystem snapshots for real-world metadata coverage.
+
+### 1. Scrape and structure the catalog
+
+We sampled existing Bazaar ecosystems, including metadata statistics from
+14,669 live CDP x402 listings. We normalized the source data into 10 broad
+evaluation categories, then expanded the controlled benchmark into 20 precise
+capability families. Source snapshots inform coverage but are not presented as
+live Stellar services.
+
+### 2. Add realistic distractors
+
+The v2 corpus contains 100 labeled resources and 400 independently authored
+distractors. Distractors include believable near-matches, sparse listings,
+wrong capabilities, misleading payment claims, duplicate-provider variants,
+and schema-valid prompt-injection text. They are compiled into official Bazaar
+wire metadata with the published
+[`@openx402/bazaar-sdk`](https://www.npmjs.com/package/@openx402/bazaar-sdk).
+
+### 3. Write realistic agent queries
+
+The benchmark contains 100 natural agent-style queries across capability,
+semantic, filtered, price-constrained, network-constrained, MCP, adversarial,
+and no-result cases. Query authors do not copy resource descriptions.
+
+### 4. Freeze and split the benchmark
+
+The catalog and query bytes are hashed into a manifest. Queries are split into
+50 development queries and a 50-query sealed release set. Development results
+can guide retrieval changes; the release answer key remains outside the
+repository so it can be used as a true holdout.
+
+### 5. Build the candidate pool
+
+BM25, brute-force exact dense retrieval, and exact hybrid retrieval contribute
+their top candidates. The pool is deduplicated and audited against related but
+unpooled resources. Production PostgreSQL lexical, semantic, and hybrid search
+are scored against this pool rather than defining their own ground truth.
+
+### 6. Grade relevance independently
+
+Every pooled `(query, resource)` candidate is sent to two blind, independent
+LLM grading contexts. They cannot see system identity, rank, score, authoring
+context, or the other grader's decision. Grades use this rubric:
+
+| Grade | Meaning |
+| ---: | --- |
+| `3` | Exact or ideal match |
+| `2` | Useful relevant result |
+| `1` | Weakly related result |
+| `0` | Irrelevant or deterministically ineligible |
+
+A third fresh-context judge adjudicates disagreements. The pipeline measures
+agreement, retains model and prompt provenance, and requires owner review
+before emitting qrels. Deterministic hard-filter violations remain grade zero;
+an LLM cannot decide that an over-budget or wrong-network result is valid.
+
+### 7. Compare retrieval systems
+
+The benchmark compares BM25, dense retrieval, production lexical search,
+semantic search, and weighted hybrid RRF. It tests multiple embedding models
+and RRF parameters. Reranking remains pluggable, but the v2 MVP release score
+does not claim a reranker result until a real configured provider is evaluated.
+Metrics include nDCG@10, MRR, Recall@20, bpref, judged@10, hard-filter
+violations, no-result accuracy, and adversarial resistance.
+
+### 8. Measure production trade-offs
+
+Quality is reported alongside query-embedding and end-to-end search
+p50/p95/p99 latency, indexing time, throughput, provider cost, embedding
+dimensions, vector storage, model availability, and infrastructure needs. A
+model with higher relevance but interactive latency that is too slow does not
+become the production default automatically.
+
+<Frame caption="Measured retrieval quality for four embedding models on the v2 development split.">
+  <img src="/images/evaluation/embedding-quality.png" alt="Embedding benchmark comparing MRR, nDCG at 10, Recall at 20, and bpref across four models." />
+</Frame>
+
+The complete benchmark contains 500 resources and 100 queries. Its public
+50-query development split has 1,442 owner-reviewed judgments. The 50-query
+release holdout remains sealed, and release scoring is intentionally deferred
+until the search strategy is frozen.
+See [measured evaluation results](/concepts/evaluation), the
+[full evaluation workflow](/concepts/evaluation-workflow), and the
+[benchmark source](https://github.com/Ithaca-Labs/openx402/tree/main/facilitator/handwritten-evals).
+
+### Online evaluation and maintenance
+
+The hosted service records search impressions and settlement outcomes in
+PostgreSQL without changing seller-authored metadata. We will maintain the
+evaluation program through:
+
+- continuous p50/p95/p99 latency, zero-result, partial-result, fallback,
+  embedding-failure, and reranker-failure monitoring;
+- result-to-paid-call conversion measured by query class, provider, network,
+  scheme, and resource type;
+- provider-concentration, new-provider exposure, stale-listing, and
+  adversarial-ranking checks so conversion does not become an unchecked
+  popularity loop;
+- daily operational dashboards and alerts, plus scheduled offline benchmark
+  runs against the development set;
+- sealed release-set scoring before a search production tag;
+- a new model generation, dimension record, vector generation, and explicit
+  reindex whenever an embedding model changes; and
+- versioned benchmark manifests, model revisions, prompt hashes, configuration,
+  hardware, and limitations in every published report.
+
+Online behavior can reveal coverage gaps and conversion changes. It never
+creates relevance labels automatically or rewrites seller claims.
+
+## Clients, SDKs, and examples
+
+The repository is one implementation with separate packages and deployment
+boundaries. A seller, buyer, agent, or self-hosting operator installs only the
+surface it needs.
+
+| Surface | Responsibility | Boundary |
+| --- | --- | --- |
+| `@openx402/stellar-facilitator` | Deployable and embeddable `/verify`, `/settle`, and `/supported` service with durable settlement, Bazaar, and search | Manages encrypted operator-owned sponsor and channel keys for submission and fees; never controls buyer signing keys, buyer payment assets, or seller proceeds |
+| `@openx402/bazaar-sdk` | Compile seller routes, schemas, payment options, and HTTP/MCP metadata | Holds no key, submits no transaction, and creates no trustline |
+| Canonical `@x402/core`, `@x402/fetch`, and `@x402/stellar` | Standard types and HTTP flow plus the Stellar exact client and facilitator scheme used by production verification | Buyer authorization signing remains local; Openx402 adds durable orchestration around the upstream exact implementation |
+| Temporary `@openx402/stellar-upto` | Reusable Stellar `upto` client/server integration shaped for upstream contribution | Proposed until merged into the canonical Stellar package |
+| `@openx402/mcp-server` | Hosted discovery or explicitly enabled local paid calls | Hosted profile has no signer; paid profile uses a local or external signer |
+
+The seller SDK derives known XLM and USDC SAC addresses from the selected
+network, validates route/payment configuration, preserves per-parameter
+descriptions, supports existing JSON Schema or optional Zod input, and compiles
+to official x402 middleware and Bazaar wire objects. It does not introduce a
+proprietary protocol format.
+
+The exact buyer example uses an unmodified canonical x402 client. It receives a
+402 response, signs the Stellar authorization locally, retries, and parses the
+standard settlement response. Smart-account signers may attach their own
+context-rule IDs and threshold or weighted authorization without exposing
+those policies to the facilitator.
+
+Runnable references:
+
+- [Paid HTTP seller example](https://github.com/Ithaca-Labs/openx402/tree/main/examples/rock-paper-scissors)
+- [Canonical exact buyer guide](/guides/buyer-client)
+- [Seller SDK guide and route factory](/guides/seller-sdk)
+- [Self-facilitating resource server](https://github.com/Ithaca-Labs/openx402/tree/main/facilitator/examples/self-facilitating-resource-server)
+- [Paid MCP seller fixture](https://github.com/Ithaca-Labs/openx402/tree/main/mcp-server/examples/seller)
+- [`upto` client guide](/guides/upto)
+
+## MCP discover, pay, and retry
+
+<Frame caption="Hosted MCP performs discovery; a local buyer component owns signing and paid execution.">
+  <img src="/images/architecture/mcp-discover-pay-retry.png" alt="MCP flow from agent intent through hosted search, local payment signing, Stellar settlement, retry, and deterministic result." />
+</Frame>
+
+- The hosted MCP exposes discovery and resource inspection without a payer
+  key.
+- A local or private signer-enabled MCP can call the seller, receive 402 terms,
+  sign locally, settle, and retry.
+- The MCP process consumes public facilitator APIs. It does not import
+  facilitator internals or connect directly to the facilitator database.
+- Inputs and outputs are structured. Every failure has a stable,
+  machine-readable code and non-null reason.
+- Independent local budgets compose with the signed x402 maximum and optional
+  on-chain smart-account policy.
+- Paid execution enforces SSRF controls, redirect limits, response-size limits,
+  network allowlists, and per-call and cumulative budgets.
+
+Read the [MCP guide](/guides/mcp), [tool reference](/reference/mcp-tools),
+[MCP implementation](https://github.com/Ithaca-Labs/openx402/tree/main/mcp-server),
+and [smart-account signer boundary](https://github.com/Ithaca-Labs/openx402/blob/main/mcp-server/docs/SMART-ACCOUNTS.md).
+
+## Hosted and self-hosted deployment
+
+<Frame caption="Hosted and self-hosted profiles run the same Openx402 implementation with PostgreSQL, Stellar connectivity, monitoring, and recovery.">
+  <img src="/images/architecture/deployment-monitoring-recovery.png" alt="Deployment architecture showing hosted and self-hosted modes, Openx402 runtime, PostgreSQL, Stellar services, operations, and transaction recovery." />
+</Frame>
+
+- **Required services:** one facilitator process and one PostgreSQL 17 instance.
+  PostgreSQL provides full-text search, pgvector, queues, leases, budgets,
+  idempotency, analytics, and encrypted key storage.
+- **Optional services:** MCP and dashboard processes. Their failure cannot
+  weaken verification or settlement.
+- **Zero-key testnet:** an explicit development mode creates sponsor and
+  channel accounts, encrypts the keys, and funds them through Friendbot.
+- **No model requirement:** self-hosting boots without embedding or reranking
+  credentials and continues with PostgreSQL full-text search.
+- **Pubnet fail-closed:** settlement does not start without configured sponsor
+  keys, approved assets, reviewed contract addresses, and measured fee limits.
+- **Replica-safe operation:** PostgreSQL leases, fencing tokens, global sponsor
+  budgets, and idempotency records work across multiple facilitator replicas.
+- **Portable packaging:** the same configuration schema and service package run
+  in local Node.js, Docker Compose, Railway, or an embedded resource server.
+- **Independent images:** the facilitator, MCP, and optional dashboard use
+  separate process boundaries. Docker Compose and the Railway template
+  orchestrate them; a Dockerfile does not start several unrelated services.
+- **Forward-only data management:** numbered PostgreSQL migrations run before
+  service readiness. Backup, restore, encryption-key recovery, and model
+  reindex procedures are operator responsibilities with documented commands.
+- **Air-gapped behavior:** the stock self-hosted image does not download model
+  weights. Lexical search works without outbound model access; an operator must
+  explicitly package and pin any local model runtime and weights.
+
+Follow the [self-hosting guide](/operations/self-hosting),
+[Railway deployment guide](https://github.com/Ithaca-Labs/openx402/blob/main/deploy/railway/README.md),
+[configuration reference](/reference/configuration), and
+[storage reference](/reference/storage).
+
+## Security and failure handling
+
+| Failure or abuse case | Architecture response |
+| --- | --- |
+| Lost RPC response after submission | Poll the persisted transaction hash. Keep the channel quarantined until success, failure, or proven expiry. |
+| Concurrent settlements | Lease different channel accounts with database fencing. The on-chain authorization permits only one successful nonce consumption. |
+| Expensive custom account or hook | Execute it during enforcing simulation and reject above measured resource, inclusion, or total fee ceilings. |
+| Sponsor draining | Apply per-principal budgets keyed by API key or anonymous source address, database-backed global budgets, concurrency limits, maximum timeout, and zero-settlement policy. |
+| Catalog poisoning | Bind metadata to observed payment terms, validate the official schema, decode route templates before traversal checks, and soft-drop invalid declarations. |
+| Seller prompt injection | Preserve seller provenance, bound and sanitize fields structurally, and document all seller-authored text as untrusted agent input. |
+| Embedding or reranker outage | Fall back to lexical search. Payment correctness and catalog browsing remain available. |
+| Key exposure or rotation | Encrypt managed keys with AES-256-GCM, rotate sponsor/channel accounts, and use documented drain and replacement procedures. |
+| PostgreSQL loss | Restore encrypted backups, verify migration state, reconcile pending hashes, and keep pubnet settlement closed until recovery checks pass. |
+
+Payment invariants are not configurable. An operator cannot disable recipient
+binding, signature validation, `actual <= maximum`, allowance equality,
+enforcing simulation, expected exact-transfer events, `upto` balance and event
+deltas, replay checks, canonical Bazaar validation, rejection reasons, or wire
+compatibility.
+
+Read the [security model](/operations/security),
+[catalog threat boundary](https://github.com/Ithaca-Labs/openx402/blob/main/facilitator/docs/CATALOG-TRUST.md),
+and [`upto` threat model](https://github.com/Ithaca-Labs/openx402/blob/main/x402-stellar-upto/docs/THREAT_MODEL.md).
+
+## Transaction and conformance testing
+
+Acceptance is tested at the wire and ledger levels rather than inferred from
+unit coverage.
+
+- Canonical exact tests use the stock x402 client and the standard
+  `{ transaction }` Stellar payload against the running facilitator.
+- Facilitator tests cover `/verify`, `/settle`, `/supported`, authentication,
+  limits, idempotency, channel leasing, fee sponsorship, unknown transaction
+  recovery, Bazaar cataloging, discovery pagination, and search degradation.
+- Contract tests cover zero, partial, maximum, negative, above-maximum, and
+  `i128::MAX`; approval/pull/pay/refund failures; atomic rollback; zero leftover
+  allowance; replay; changed actual; concurrent settlement; hooks; and custom
+  accounts.
+- Real-auth OpenZeppelin tests use signed auth entries. They do not rely on
+  `mock_all_auths()` or `mock_auths()`, which would skip `__check_auth` policy
+  execution.
+- Token testing includes ordinary SEP-41, a different-decimal contract,
+  authorization-restricted SAC accounts, and a clawback-capable SAC. Live
+  issued-USDC and broader unusual-token coverage remain explicitly pending.
+- Discovery tests cover schema soft-drop, percent-decoded route traversal,
+  cross-seller spoofing, MCP tuple identity, append-only pricing, catalog
+  staleness, and cursor stability across simulated replicas.
+- Search tests cover hard-filter violations, known-item retrieval, no-result
+  behavior, adversarial metadata, frozen manifests, blind judgments, and
+  production retrieval latency.
+- MCP tests cover deterministic tool I/O, budgets, SSRF and redirect limits,
+  response bounds, signer modes, search, selection, and paid retry behavior.
+
+Published testnet evidence currently includes canonical exact plus zero,
+partial, maximum, concurrent, failure-retry, hook, custom-account, and
+OpenZeppelin-policy `upto` transactions. Official canonical `upto`, exact and
+`upto` pubnet hashes, the four-profile x402 E2E report, and external review are
+remaining acceptance gates.
+
+Review [upto conformance evidence](/reference/upto-conformance), the
+[root evidence table](https://github.com/Ithaca-Labs/openx402#verification-and-current-evidence),
+and [security release gates](/operations/security#pubnet).
+
+## Configuration surface
+
+The implemented configuration surface includes:
+
+- networks, RPC/Horizon endpoints, approved SEP-41 assets, sponsor/channel
+  accounts, fees, maximum amounts, and timeouts;
+- caller authentication, rate windows, concurrency, sponsored-fee budgets,
+  settlement polling, and unresolved-settlement backpressure;
+- automatic cataloging, index-on-verify or index-on-settle, metadata bounds,
+  staleness, retention, and discovery pagination;
+- lexical, semantic, and reranking providers, model identity, dimensions,
+  weights, timeouts, candidate counts, and fallback behavior;
+- channel-pool size, lease timing, pending-settlement limits, and minimum
+  sponsor/channel balances; and
+- analytics enablement, query-impression retention, and address redaction.
+
+The production operations phase adds configurable RPC circuit-breaker
+thresholds, structured log levels, metrics and tracing exporters, audit-log
+retention, and alert thresholds. These are required delivery controls but are
+not represented as already implemented configuration keys.
+
+See [every configuration key and default](/reference/configuration) and the
+[operator configuration source](https://github.com/Ithaca-Labs/openx402/blob/main/facilitator/docs/CONFIGURATION.md).
+
+## Maintenance and conformance
+
+Openx402 treats conformance as a continuing release obligation:
+
+- pin x402 package versions and monitor the Foundation repository for spec,
+  extension, transport, and E2E harness changes;
+- run unit, integration, wire-shape, canonical-client, and official x402 E2E
+  tests before each release;
+- publish `/supported`, package versions, contract addresses, commands,
+  rejection fixtures, and transaction hashes in conformance reports;
+- re-run both networks and both schemes when a settlement package, Stellar
+  SDK, contract, or wire specification changes;
+- monitor contract instance and Wasm TTL and extend them before archival;
+- run dependency-license checks and reject AGPL or strong-copyleft additions;
+- publish security advisories, compatibility status, and remediation notes;
+  and
+- maintain seller, buyer/agent, operator, and protocol-contributor guides with
+  runnable examples.
+
+## Delivery boundary
+
+| Area | Prototype evidence | Remaining production delivery |
+| --- | --- | --- |
+| Exact facilitator | Canonical testnet payment, fee sponsorship, standard endpoints | Pubnet activation, final fee calibration, full four-profile conformance report |
+| Bazaar | Automatic HTTP cataloging, browse/search APIs, published seller SDK | Live MCP catalog evidence, cross-facilitator report, production liveness monitoring |
+| Search | Frozen 500-resource/100-query v2 corpus and development measurements | Final search strategy, sealed release scoring, online conversion evaluation |
+| MCP | Hosted discovery tools and tested paid-call implementation | Published discover-pay-retry live evidence and production signer deployment guidance |
+| Upto | Specification, contract, 36 Rust tests, live testnet hashes, OZ policy flow | SDF/TSC review, canonical reusable integration, audit remediation, pubnet deployment |
+| Operations | Docker Compose, Railway template, health routes, PostgreSQL recovery design | Production alerts, restoration drill, key-rotation drill, availability evidence, incident runbooks |
+
+The phased grant plan moves from a testable MVP, through testnet expansion and
+external review, to audit remediation and pubnet launch. Review the complete
+[tranche plan](https://github.com/Ithaca-Labs/openx402/blob/main/scf-build-plan/README.md)
+for deliverables, budgets, completion evidence, and external dependencies.
