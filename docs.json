@@ -116,8 +116,7 @@
           {
             "group": "Architecture",
             "pages": [
-              "architecture/overview",
-              "concepts/architecture"
+              "architecture/overview"
             ]
           }
         ]
@@ -243,7 +242,7 @@
     },
     {
       "source": "/docs/ARCHITECTURE",
-      "destination": "/concepts/architecture",
+      "destination": "/architecture/overview",
       "permanent": true
     },
     {
