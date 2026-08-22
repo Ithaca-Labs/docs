@@ -20,8 +20,8 @@ This tutorial uses the hosted public testnet services:
 
 | Service | URL | Role |
 | --- | --- | --- |
-| Facilitator | `https://facilitator-production-8430.up.railway.app` | Verify, settle, sponsor fees, and catalog |
-| Discovery MCP | `https://mcp-production-e242.up.railway.app/mcp` | Search and inspect catalog entries only |
+| Facilitator | `https://facilitator.stellarx402.xyz` | Verify, settle, sponsor fees, and catalog |
+| Discovery MCP | `https://mcp.stellarx402.xyz/mcp` | Search and inspect catalog entries only |
 
 You will run the included Rock Paper Scissors seller and canonical paying
 client locally. The hosted MCP does not hold a buyer key and cannot pay.
@@ -77,7 +77,7 @@ Start your HTTPS tunnel first and forward it to port `4788`. Then, from
 ```bash
 SELLER_PUBLIC_URL=https://your-tunnel.example \
 SELLER_PAY_TO=G... \
-FACILITATOR_URL=https://facilitator-production-8430.up.railway.app \
+FACILITATOR_URL=https://facilitator.stellarx402.xyz \
 npm run server
 ```
 
@@ -146,7 +146,7 @@ From any directory:
 
 ```bash
 curl -fsS \
-  'https://facilitator-production-8430.up.railway.app/discovery/search?query=rock%20paper%20scissors' \
+  'https://facilitator.stellarx402.xyz/discovery/search?query=rock%20paper%20scissors' \
   | jq
 ```
 

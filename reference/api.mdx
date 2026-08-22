@@ -15,6 +15,13 @@ routes use the x402 v2 request and response types. Discovery routes keep the
 official Bazaar response shape. Operator analytics add internal fields and are
 authenticated separately from public discovery.
 
+<Info>
+  This reference and its interactive request builder target the public RFP
+  facilitator at `https://facilitator.stellarx402.xyz`. The public discovery
+  MCP endpoint is `https://mcp.stellarx402.xyz/mcp`. The confidential-token
+  preview uses a separate facilitator.
+</Info>
+
 For generated endpoint pages with cURL, JavaScript, and Python examples plus
 the interactive request builder, use the top-level **API Reference** tab or
 open [Check liveness](/api-reference/health/check-liveness) directly. It is
@@ -32,7 +39,7 @@ bearer keys through `FACILITATOR_API_KEYS` (or the variable named by
 
 ```bash
 curl -H "Authorization: Bearer $FACILITATOR_API_KEY" \
-  https://facilitator.example.com/supported
+  https://facilitator.stellarx402.xyz/supported
 ```
 
 `/health/*` and `/discovery/*` are public read-only routes. Pubnet startup
@@ -47,7 +54,7 @@ fails closed unless authentication and sponsor configuration are present.
 | `GET` | `/health/ready` | PostgreSQL readiness plus search-provider status. |
 
 ```bash
-curl -fsS https://facilitator.example.com/health/ready | jq
+curl -fsS https://facilitator.stellarx402.xyz/health/ready | jq
 ```
 
 Search degradation does not make the payment service unready. The response
@@ -150,7 +157,7 @@ Browse catalog entries using the official `items` response shape:
 
 ```bash
 curl -fsS \
-  'https://facilitator.example.com/discovery/resources?type=http&network=stellar%3Atestnet&limit=20' \
+  'https://facilitator.stellarx402.xyz/discovery/resources?type=http&network=stellar%3Atestnet&limit=20' \
   | jq
 ```
 
@@ -164,7 +171,7 @@ requires `asset` and is expressed in that asset's atomic units.
 Search uses the official `resources`, `partialResults`, and `pagination` shape:
 
 ```bash
-curl -fsS --get 'https://facilitator.example.com/discovery/search' \
+curl -fsS --get 'https://facilitator.stellarx402.xyz/discovery/search' \
   --data-urlencode 'query=weather for Mumbai' \
   --data-urlencode 'network=stellar:testnet' \
   --data-urlencode 'limit=10' | jq
@@ -181,7 +188,7 @@ Resolve one current resource by identity. HTTP resources use `type=http&url=...`
 MCP resources also require `toolName`:
 
 ```bash
-curl -fsS --get 'https://facilitator.example.com/discovery/resource' \
+curl -fsS --get 'https://facilitator.stellarx402.xyz/discovery/resource' \
   --data-urlencode 'type=mcp' \
   --data-urlencode 'url=https://seller.example.com/mcp' \
   --data-urlencode 'toolName=sentiment_analysis' | jq

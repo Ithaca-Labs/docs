@@ -24,7 +24,7 @@ fall back to `30`. `days=0` means all available history.
 ```bash
 curl -fsS \
   -H "Authorization: Bearer $FACILITATOR_API_KEY" \
-  'https://facilitator.example.com/analytics/v1/overview?days=30' | jq
+  'https://facilitator.stellarx402.xyz/analytics/v1/overview?days=30' | jq
 ```
 
 ## Overview and volume
@@ -60,7 +60,7 @@ Each item can include `id`, `occurred_at`, `network`, `scheme`, `asset`,
 ```bash
 curl -fsS \
   -H "Authorization: Bearer $FACILITATOR_API_KEY" \
-  --get 'https://facilitator.example.com/analytics/v1/transactions' \
+  --get 'https://facilitator.stellarx402.xyz/analytics/v1/transactions' \
   --data-urlencode 'network=stellar:testnet' \
   --data-urlencode 'scheme=exact' \
   --data-urlencode 'limit=50' | jq

@@ -7,8 +7,8 @@
   },
   "servers": [
     {
-      "url": "https://facilitator-production-8430.up.railway.app",
-      "description": "Hosted Stellar testnet preview"
+      "url": "https://facilitator.stellarx402.xyz",
+      "description": "Hosted Stellar testnet facilitator"
     }
   ],
   "tags": [

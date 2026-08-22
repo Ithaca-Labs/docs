@@ -41,7 +41,7 @@ import { ExactStellarScheme } from "@x402/stellar/exact/server";
 const PORT = Number(process.env.PORT ?? 4788);
 const NETWORK = "stellar:testnet" as const;
 const FACILITATOR_URL = process.env.FACILITATOR_URL
-  ?? "https://facilitator-production-8430.up.railway.app";
+  ?? "https://facilitator.stellarx402.xyz";
 const PUBLIC_URL = process.env.SELLER_PUBLIC_URL?.replace(/\/$/, "");
 const PAY_TO = process.env.SELLER_PAY_TO;
 
@@ -118,7 +118,7 @@ From the seller project:
 ```bash
 SELLER_PUBLIC_URL=https://your-tunnel.example \
 SELLER_PAY_TO=G... \
-FACILITATOR_URL=https://facilitator-production-8430.up.railway.app \
+FACILITATOR_URL=https://facilitator.stellarx402.xyz \
 npx tsx index.ts
 ```
 
